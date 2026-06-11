@@ -103,12 +103,19 @@ export function TeamClient({ initialTeam, selfId }: { initialTeam: TeamMember[];
 
   return (
     <>
-      <div className="page-head">
-        <h1>Settings</h1>
-        <p>Team access &amp; workspace preferences</p>
+      <div className="page-head row">
+        <div>
+          <h1>Settings</h1>
+          <p>Team access &amp; workspace preferences</p>
+        </div>
+        {isSuper && (
+          <button className="btn btn-primary" onClick={() => { setEditing(null); setFormMode("add"); }}>
+            <Icon name="plus" size={15} />Add member
+          </button>
+        )}
       </div>
 
-      <div className="toolbar split">
+      <div className="toolbar">
         <div className="search">
           <Icon name="search" size={15} />
           <input
@@ -117,11 +124,6 @@ export function TeamClient({ initialTeam, selfId }: { initialTeam: TeamMember[];
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
-        {isSuper && (
-          <button className="btn btn-primary" onClick={() => { setEditing(null); setFormMode("add"); }}>
-            <Icon name="plus" size={15} />Add member
-          </button>
-        )}
       </div>
 
       <div className="panel first">
