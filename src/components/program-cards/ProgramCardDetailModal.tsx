@@ -1,0 +1,94 @@
+"use client";
+
+import { useQuery } from "@tanstack/react-query";
+import { Icon } from "@/components/ui/Icon";
+import { fetchProgramCardDesigns } from "@/lib/program-cards";
+import { fmtDate, fmtNum } from "@/lib/format";
+import { useEscClose } from "@/lib/use-esc-close";
+import type { ProgramCard, PurchaseOrder } from "@/lib/types";
+
+export function ProgramCardDetailModal({
+  card,
+  po,
+  onClose,
+}: {
+  card: ProgramCard;
+  po: PurchaseOrder | undefined;
+  onClose: () => void;
+}) {
+  const { data: designs = [], isLoading, isError, refetch } = useQuery({
+    queryKey: ["program-card-designs", card.id],
+    queryFn: () => fetchProgramCardDesigns(card.id),
+  });
+
+  useEscClose(true, onClose);
+
+  return (
+    <div className="overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="modal" role="dialog" aria-modal="true" aria-label={`Program card ${card.program_uid}`}>
+        <div className="modal-head">
+          <div>
+            <h3>Program <span className="mono">{card.program_uid}</span></h3>
+            <p>Lot <span className="mono">{card.lot_no ?? "—"}</span> · {card.dying_house_name ?? "No dyeing house"}</p>
+          </div>
+          <button className="close-x" onClick={onClose} aria-label="Close"><Icon name="x" /></button>
+        </div>
+
+        <div className="modal-body">
+          <div className="sum">
+            <div className="sum-row"><span>PO No</span><b className="mono">{po?.po_no ?? "—"}</b></div>
+            <div className="sum-row"><span>Vendor</span><b>{po?.vendor_name ?? "—"}</b></div>
+            <div className="sum-row"><span>Program ID</span><b className="mono">{card.program_uid}</b></div>
+            <div className="sum-row"><span>Lot No</span><b className="mono">{card.lot_no ?? "—"}</b></div>
+            <div className="sum-row"><span>Dyeing house</span><b>{card.dying_house_name ?? "—"}</b></div>
+            <div className="sum-row"><span>Program date</span><b>{fmtDate(card.program_date)}</b></div>
+            <div className="sum-row"><span>Total meters</span><b className="mono">{fmtNum(card.total_meters)} m</b></div>
+          </div>
+
+          <div className="sum-title">Design cuttings</div>
+          {isLoading ? (
+            <div className="skeleton" style={{ height: 96 }} />
+          ) : isError ? (
+            <p className="muted-note">
+              Couldn&apos;t load the cuttings.{" "}
+              <button type="button" className="act" onClick={() => refetch()}>Retry</button>
+            </p>
+          ) : designs.length > 0 ? (
+            <table className="mini-table">
+              <thead>
+                <tr><th>Design no</th><th>Colour</th><th style={{ textAlign: "right" }}>Meters</th></tr>
+              </thead>
+              <tbody>
+                {designs.map((d) => (
+                  <tr key={d.id}>
+                    <td className="mono">{d.design_no ?? "—"}</td>
+                    <td>{d.color ?? "—"}</td>
+                    <td className="num mono">{fmtNum(d.meter)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <p className="muted-note">No design cuttings recorded for this program.</p>
+          )}
+
+          <div className="sum-title">Colour cutting (PDF)</div>
+          {card.pdf_url ? (
+            <a className="act" href={card.pdf_url} target="_blank" rel="noopener noreferrer">
+              <Icon name="file" size={15} />View colour cutting
+            </a>
+          ) : (
+            <p className="muted-note">No PDF attached.</p>
+          )}
+        </div>
+
+        <div className="modal-foot">
+          <span />
+          <div className="foot-actions">
+            <button className="btn btn-ghost" onClick={onClose}>Close</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

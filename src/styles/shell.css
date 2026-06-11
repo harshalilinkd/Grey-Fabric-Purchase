@@ -1,0 +1,531 @@
+/* ============================================================
+   APP SHELL — clean professional style
+   White chrome on a light neutral canvas, one cobalt accent,
+   real card elevation, subtle motion only (fade-up + count-up).
+   Layout/structure unchanged (tree nav, collapse, mobile drawer).
+   ============================================================ */
+.app { display: flex; min-height: 100vh; }
+
+/* ============ keyframes (subtle motion only) ============ */
+@keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+/* Entrance pattern: animate FROM the hidden state TO the element's natural
+   state, with fill-mode BACKWARDS (covers the delay) and no static opacity:0.
+   Never use fill:forwards here — a persisted transform (Blink keeps an identity
+   matrix even for a `to { transform: none }`) turns every risen block into a
+   stacking context, painting later siblings over toolbar dropdowns and
+   re-anchoring position:fixed backdrops to the block instead of the viewport. */
+@keyframes rise { from { opacity: 0; transform: translateY(10px); } }
+@keyframes grow { from { width: 0; } }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+@keyframes route-fill { from { transform: scaleX(0); } to { transform: scaleX(0.9); } }
+
+/* ---------- SIDEBAR ---------- */
+.sidebar {
+  width: 248px;
+  flex-shrink: 0;
+  background: var(--card);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  transition: width 0.2s;
+}
+.sb-brand {
+  padding: 0 20px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  height: 60px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.sb-logo {
+  width: 32px; height: 32px;
+  border-radius: 9px;
+  background: var(--accent);
+  color: var(--accent-fg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: -0.3px;
+  flex-shrink: 0;
+  box-shadow: var(--sh-sm);
+}
+.sb-name { font-weight: 700; font-size: 14.5px; line-height: 1.15; letter-spacing: -0.2px; color: var(--fg); }
+.sb-name small { display: block; font-weight: 500; font-size: 10.5px; color: var(--muted); letter-spacing: 0.4px; }
+.sb-nav {
+  position: relative; /* anchors the sliding active pill */
+  flex: 1;
+  padding: 12px 10px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* sliding active pill — JS measures the active link and moves this behind it */
+.nav-ind {
+  position: absolute;
+  top: 0; left: 0;
+  width: 0; height: 0;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  opacity: 0;
+  pointer-events: none;
+  will-change: transform;
+}
+.nav-ind.ready {
+  transition:
+    transform 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+    width 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+    height 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.15s ease;
+}
+.nav-ind::before {
+  content: "";
+  position: absolute;
+  left: 0; top: 50%;
+  width: 3px; height: 16px;
+  transform: translateY(-50%);
+  border-radius: 3px;
+  background: var(--accent);
+}
+
+/* standalone top-level links (e.g. Dashboard) — separated by spacing, not rules */
+.nav-top-items { margin-bottom: 4px; }
+
+/* nav items — flat rows, no tree/connector lines */
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 9px 12px;
+  min-height: 40px;
+  border-radius: 10px;
+  color: var(--fg-2);
+  font-size: 13px;
+  font-weight: 500;
+  width: 100%;
+  text-align: left;
+  margin-bottom: 1px;
+  position: relative;
+  white-space: nowrap;
+  transition: background 0.15s ease, color 0.15s ease, transform 0.15s ease;
+}
+.nav-item:not(.active):hover { background: var(--card-2); color: var(--fg); transform: translateX(2px); }
+.nav-item.active { color: var(--accent); font-weight: 600; }
+.nav-item svg { width: 18px; height: 18px; flex-shrink: 0; opacity: 0.6; transition: opacity 0.15s ease; }
+.nav-item:hover svg,
+.nav-item.active svg { opacity: 1; }
+/* static fallback pill (SSR / first paint, before the JS indicator mounts) */
+.sb-nav:not(.has-ind) .nav-item.active { background: var(--accent-soft); }
+.sb-nav:not(.has-ind) .nav-item.active::before {
+  content: "";
+  position: absolute;
+  left: 0; top: 50%;
+  width: 3px; height: 16px;
+  transform: translateY(-50%);
+  border-radius: 3px;
+  background: var(--accent);
+}
+/* the collapsible branch clips overflow, so draw the focus ring inset */
+.sb-nav .nav-item:focus-visible { outline-offset: -2px; }
+
+/* section groups — small uppercase label + rotating chevron */
+.nav-group { margin-top: 14px; }
+.nav-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-height: 28px;
+  padding: 4px 12px;
+  margin-bottom: 2px;
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--muted);
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.nav-group-header:hover { background: var(--card-2); color: var(--fg-2); }
+.ngh-label { font-size: 10px; font-weight: 700; letter-spacing: 1.1px; text-transform: uppercase; }
+.nav-group-header svg { width: 13px; height: 13px; flex-shrink: 0; opacity: 0.65; transition: transform 0.2s ease; }
+.nav-group.open > .nav-group-header svg { transform: rotate(90deg); }
+
+/* collapsible region — grid-rows 0fr→1fr animates height smoothly */
+.nav-group-items { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 0.25s ease; }
+.nav-group.open > .nav-group-items { grid-template-rows: 1fr; }
+/* grouped items sit on a soft indent (no connector lines) */
+.nav-branch { overflow: hidden; min-height: 0; padding-left: 8px; }
+
+/* ---------- SIDEBAR USER SECTION (pinned at the bottom) ---------- */
+.sb-user {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  border-top: 1px solid var(--border);
+}
+.sb-avatar {
+  position: relative;
+  width: 34px; height: 34px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-fg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.sb-user-meta { flex: 1; min-width: 0; line-height: 1.3; }
+.sb-user-name {
+  display: block;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sb-user-role { display: block; font-size: 11px; color: var(--muted); }
+.sb-signout {
+  position: relative;
+  width: 34px; height: 34px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  flex-shrink: 0;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.sb-signout:hover { background: var(--bad-bg); color: var(--bad); }
+
+/* ---------- COLLAPSED ICON RAIL (desktop only) ---------- */
+@media (min-width: 901px) {
+  html.sb-collapsed .sidebar { width: 64px; }
+  html.sb-collapsed .sb-name,
+  html.sb-collapsed .nav-label,
+  html.sb-collapsed .sb-user-meta { display: none; }
+  html.sb-collapsed .sb-brand { justify-content: center; padding-left: 0; padding-right: 0; }
+
+  /* group headers give way to slim centered dividers */
+  html.sb-collapsed .nav-group-header { display: none; }
+  html.sb-collapsed .nav-group { position: relative; margin-top: 9px; padding-top: 9px; }
+  html.sb-collapsed .nav-group::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 50%;
+    width: 24px; height: 1px;
+    transform: translateX(-50%);
+    background: var(--border);
+  }
+  html.sb-collapsed .nav-top-items { margin-bottom: 0; }
+
+  /* every item stays visible in the rail, whatever its group's state */
+  html.sb-collapsed .nav-group-items { grid-template-rows: 1fr; }
+  html.sb-collapsed .nav-branch { padding-left: 0; }
+
+  /* icon-only items — centered via left padding (not justify-content) so the
+     fixed tooltip's static position stays pinned to the item's left edge */
+  html.sb-collapsed .nav-item { width: 44px; padding: 0 0 0 13px; gap: 0; margin-inline: auto; }
+  html.sb-collapsed .nav-item:not(.active):hover { transform: none; }
+
+  /* user footer stacks vertically */
+  html.sb-collapsed .sb-user { flex-direction: column; gap: 8px; padding: 12px 0; }
+
+  /* tooltips — position:fixed escapes the nav scroller's overflow clip */
+  html.sb-collapsed .sidebar [data-tip]::after {
+    content: attr(data-tip);
+    position: fixed;
+    margin-left: 39px;
+    padding: 5px 10px;
+    border-radius: 7px;
+    background: var(--fg);
+    color: var(--card);
+    font-size: 11.5px;
+    font-weight: 600;
+    white-space: nowrap;
+    box-shadow: var(--sh-md);
+    opacity: 0;
+    transform: translateX(-4px);
+    transition: opacity 0.15s ease, transform 0.15s ease;
+    pointer-events: none;
+    z-index: 100;
+  }
+  html.sb-collapsed .sidebar [data-tip]:hover::after,
+  html.sb-collapsed .sidebar [data-tip]:focus-visible::after { opacity: 1; transform: translateX(0); }
+
+  /* footer sits outside the scroller, so plain absolute positioning works */
+  html.sb-collapsed .sb-user [data-tip]::after {
+    position: absolute;
+    left: calc(100% + 8px);
+    top: 50%;
+    margin-left: 0;
+    transform: translate(-4px, -50%);
+  }
+  html.sb-collapsed .sb-user [data-tip]:hover::after,
+  html.sb-collapsed .sb-user [data-tip]:focus-visible::after { opacity: 1; transform: translate(0, -50%); }
+}
+
+/* ---------- TOP BAR ---------- */
+.main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.topnav {
+  height: 60px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--card) 85%, transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 26px;
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+.tn-left { display: flex; align-items: center; gap: 13px; }
+.tn-greet { font-size: 13px; color: var(--fg-2); }
+.tn-greet b { color: var(--fg); font-weight: 600; }
+.tn-right { display: flex; align-items: center; gap: 11px; }
+
+.conn-dot {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 5px 10px;
+  border-radius: 100px;
+}
+.conn-dot i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
+.conn-dot.live { color: var(--ok); background: var(--ok-bg); }
+.conn-dot.live i { animation: pulse 2s ease-in-out infinite; }
+.conn-dot.connecting { color: var(--warn); background: var(--warn-bg); }
+.conn-dot.connecting i { animation: pulse 1s ease-in-out infinite; }
+.conn-dot.offline { color: var(--muted); background: var(--card-2); }
+@media (max-width: 600px) { .conn-dot span, .conn-dot { font-size: 0; } .conn-dot i { margin: 0; } }
+
+/* ⌘K palette trigger in the top bar */
+.cmdk-trigger {
+  display: inline-flex; align-items: center; gap: 8px;
+  height: 36px; padding: 0 10px 0 11px;
+  border: 1px solid var(--border); border-radius: 9px;
+  background: var(--card-2); color: var(--muted);
+  font-size: 12.5px; font-weight: 500;
+  transition: border-color 0.13s, background 0.13s, color 0.13s;
+}
+.cmdk-trigger:hover { border-color: var(--border-strong); color: var(--fg-2); }
+.cmdk-trigger svg { flex-shrink: 0; }
+.cmdk-trigger span { padding-right: 4px; }
+@media (max-width: 720px) { .cmdk-trigger span { display: none; } }
+
+/* slim top-of-page route progress bar */
+.route-progress { position: fixed; top: 0; left: 0; right: 0; height: 2px; z-index: 200; pointer-events: none; }
+.route-progress-bar { display: block; height: 100%; width: 100%; background: var(--accent); transform-origin: 0 50%; transform: scaleX(0); box-shadow: 0 0 8px var(--accent-line); }
+.route-progress-bar.loading { animation: route-fill 1.4s cubic-bezier(0.1, 0.6, 0.2, 1) forwards; }
+.route-progress-bar.done { transform: scaleX(1); transition: transform 0.15s ease, opacity 0.25s ease 0.12s; opacity: 0; }
+@media (prefers-reduced-motion: reduce) { .route-progress { display: none; } }
+.icon-btn {
+  width: 36px; height: 36px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--fg-2);
+  position: relative;
+  flex-shrink: 0;
+  transition: background 0.13s, color 0.13s;
+}
+.icon-btn:hover { background: var(--card-2); color: var(--fg); }
+.icon-btn svg { width: 18px; height: 18px; }
+.badge-dot {
+  position: absolute;
+  top: 7px; right: 8px;
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--bad);
+  border: 1.5px solid var(--card);
+  pointer-events: none;
+}
+
+/* ---------- CONTENT ----------
+   Fills the full width between the sidebar and the window edge —
+   no max-width cap, just consistent side padding. */
+.content {
+  padding: 30px 32px 64px;
+  width: 100%;
+  flex: 1;
+}
+
+/* ---------- PAGE HEADER ---------- */
+.page-head { margin-bottom: 22px; animation: rise 0.45s 0.04s backwards; }
+.page-head.row { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.page-head h1 { font-size: 24px; font-weight: 700; letter-spacing: -0.5px; line-height: 1.2; color: var(--fg); }
+.page-head p { font-size: 13.5px; color: var(--muted); margin-top: 3px; }
+
+/* ---------- BUTTONS ---------- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 16px;
+  min-height: 40px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  border: 1px solid transparent;
+  transition: background 0.15s, box-shadow 0.15s, border-color 0.15s;
+}
+.btn svg { width: 15px; height: 15px; }
+.btn-primary { background: var(--accent); color: var(--accent-fg); box-shadow: var(--sh-sm); }
+.btn-primary:hover { background: var(--accent-strong); box-shadow: var(--sh); }
+.btn-ghost { background: var(--card); border-color: var(--border); color: var(--fg); box-shadow: var(--sh-sm); }
+.btn-ghost:hover { background: var(--card-2); }
+
+/* ---------- STATUS PILLS (small dot + label) ---------- */
+.pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 7px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+.pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.pill.info { color: var(--info); background: var(--info-bg); }
+.pill.success { color: var(--ok); background: var(--ok-bg); }
+.pill.warning { color: var(--warn); background: var(--warn-bg); }
+.pill.danger { color: var(--bad); background: var(--bad-bg); }
+.pill.brand { color: var(--accent); background: var(--accent-soft); }
+.pill.plain { color: var(--fg-2); background: var(--card-2); }
+.pill.plain::before { background: var(--muted); }
+
+/* ---------- KPI / METRIC CARDS ---------- */
+.kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(208px, 1fr)); gap: 14px; margin-bottom: 22px; }
+.kpi {
+  display: block;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 18px;
+  box-shadow: var(--sh);
+  cursor: pointer;
+  animation: rise 0.45s backwards;
+  transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s;
+}
+.kpi:hover { border-color: var(--border-strong); box-shadow: var(--sh-md); transform: translateY(-2px); }
+.kpi:nth-child(1) { animation-delay: 0.05s; }
+.kpi:nth-child(2) { animation-delay: 0.1s; }
+.kpi:nth-child(3) { animation-delay: 0.15s; }
+.kpi:nth-child(4) { animation-delay: 0.2s; }
+.kpi:nth-child(5) { animation-delay: 0.25s; }
+.kpi-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+.kpi-icon {
+  width: 38px; height: 38px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.kpi-icon svg { width: 18px; height: 18px; }
+.kpi-label { font-size: 11px; font-weight: 600; letter-spacing: 0.6px; text-transform: uppercase; color: var(--muted); }
+.kpi-value { font-size: 28px; font-weight: 700; letter-spacing: -0.8px; line-height: 1.1; color: var(--fg); margin-top: 2px; }
+.kpi-value small { font-size: 14px; color: var(--muted); font-weight: 600; }
+.kpi-sub { font-size: 12px; color: var(--fg-2); margin-top: 5px; }
+.trend { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 7px; }
+.trend.up { color: var(--ok); background: var(--ok-bg); }
+.trend.warn { color: var(--warn); background: var(--warn-bg); }
+
+/* ---------- PANELS ---------- */
+.grid-2 { display: grid; grid-template-columns: 1.45fr 1fr; gap: 16px; margin-bottom: 16px; }
+.panel {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: var(--sh);
+  overflow: hidden;
+  animation: rise 0.45s 0.3s backwards;
+}
+.panel.b { animation-delay: 0.34s; }
+.panel.c { animation-delay: 0.38s; }
+/* a panel that is the page's first/only block shouldn't wait for siblings */
+.panel.first { animation-delay: 0.12s; }
+.panel-head { padding: 15px 19px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+.panel-head h3 { font-size: 14.5px; font-weight: 700; color: var(--fg); }
+.panel-head .tag { font-size: 11px; color: var(--fg-2); font-weight: 600; background: var(--card-2); padding: 4px 10px; border-radius: 100px; }
+.panel-head .link { font-size: 12px; color: var(--accent); font-weight: 600; display: inline-flex; align-items: center; gap: 3px; }
+.shuttle { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+.panel-body { padding: 19px; }
+
+/* funnel */
+.fr { display: flex; align-items: center; gap: 12px; margin-bottom: 15px; }
+.fr:last-child { margin-bottom: 0; }
+.fl { width: 120px; font-size: 12.5px; font-weight: 600; flex-shrink: 0; display: flex; align-items: center; gap: 8px; color: var(--fg-2); }
+.fd { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.fb { flex: 1; height: 9px; background: var(--card-2); border-radius: 6px; overflow: hidden; }
+.ff { height: 100%; border-radius: 6px; animation: grow 0.9s 0.35s cubic-bezier(0.2, 0.7, 0.3, 1) backwards; }
+.fc { font-size: 14px; font-weight: 700; width: 34px; text-align: right; color: var(--fg); }
+
+/* activity / follow-ups list */
+.li { display: flex; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.li:last-child { border-bottom: none; }
+.li-ic { width: 32px; height: 32px; border-radius: 9px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.li-ic svg { width: 15px; height: 15px; }
+.li-b p { font-size: 12.8px; line-height: 1.45; color: var(--fg-2); }
+.li-b p b { font-weight: 600; color: var(--fg); }
+.li-t { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+/* ---------- PAGE-LEVEL EMPTY STATE (placeholder screens) ---------- */
+.placeholder {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: var(--sh);
+  padding: 60px 30px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  animation: rise 0.45s 0.1s backwards;
+}
+.placeholder .ph-icon {
+  width: 60px; height: 60px;
+  border-radius: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.placeholder h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.3px; color: var(--fg); margin: 16px 0 6px; }
+.placeholder p { font-size: 13px; color: var(--muted); max-width: 380px; line-height: 1.6; margin-bottom: 16px; }
+
+/* ---------- MOBILE: sidebar becomes a slide-in drawer ---------- */
+.sb-backdrop { display: none; }
+@media (max-width: 900px) {
+  .sidebar {
+    position: fixed;
+    left: 0; top: 0;
+    z-index: 60;
+    width: 248px;
+    transform: translateX(-100%);
+    /* visibility keeps the closed drawer out of the tab order;
+       it flips at the end of the slide-out, instantly on slide-in */
+    visibility: hidden;
+    transition: transform 0.25s, visibility 0.25s;
+    box-shadow: var(--sh-md);
+  }
+  .sidebar.mobile-open { transform: translateX(0); visibility: visible; }
+  .sb-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 55;
+    background: color-mix(in srgb, var(--fg) 40%, transparent);
+    animation: fade 0.2s ease;
+  }
+  .topnav { padding: 0 16px; }
+  .content { padding: 20px 16px 48px; }
+  .grid-2 { grid-template-columns: 1fr; }
+}

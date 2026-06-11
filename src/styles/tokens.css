@@ -1,0 +1,117 @@
+/* ============================================================
+   GREY FMS DESIGN TOKENS — clean, professional, neutral
+   Light neutral canvas, pure-white cards that visibly separate
+   (border + shadow), near-black text, ONE cobalt accent used
+   sparingly. Every color is a semantic CSS variable so light +
+   dark both work. Never hardcode colors in components.
+   ============================================================ */
+:root {
+  --bg: #f7f7f8;            /* page background — light neutral */
+  --card: #ffffff;          /* cards — pure white */
+  --card-2: #f4f4f5;        /* hovers, nested fills, segmented track */
+  --inset: #fafafa;         /* table header rows, inputs */
+
+  /* TEXT — high contrast, three tiers */
+  --fg: #18181b;            /* near-black: headings + primary */
+  --fg-2: #3f3f46;          /* secondary / body */
+  --muted: #71717a;         /* labels & captions ONLY */
+
+  --border: #e6e6e9;
+  --border-strong: #d6d6da;
+
+  /* ONE accent — cobalt. Active nav, primary button, focus, key numbers. */
+  --accent: #2563eb;
+  --accent-strong: #1d4ed8; /* hover/pressed */
+  --accent-fg: #ffffff;
+  --accent-soft: rgba(37, 99, 235, 0.08);
+  --accent-line: rgba(37, 99, 235, 0.22);
+
+  /* status — dark enough to pass 4.5:1 as text on their own tints */
+  --ok: #15803d;    --ok-bg: rgba(21, 128, 61, 0.1);
+  --warn: #b45309;  --warn-bg: rgba(180, 83, 9, 0.1);
+  --bad: #b91c1c;   --bad-bg: rgba(185, 28, 28, 0.1);
+  --info: #1d4ed8;  --info-bg: rgba(29, 78, 216, 0.08);
+
+  /* elevation — cards must visibly separate from the page */
+  --sh-sm: 0 1px 2px rgba(24, 24, 27, 0.06);
+  --sh: 0 1px 3px rgba(24, 24, 27, 0.07), 0 4px 12px rgba(24, 24, 27, 0.05);
+  --sh-md: 0 6px 20px rgba(24, 24, 27, 0.1);
+}
+
+html.dark {
+  --bg: #0a0a0b;
+  --card: #161618;
+  --card-2: #1e1e21;
+  --inset: #121214;
+
+  --fg: #fafafa;
+  --fg-2: #d4d4d8;
+  --muted: #8a8a93;
+
+  --border: #27272a;
+  --border-strong: #33333a;
+
+  /* dark mode flips to light-blue fills with near-black text so the
+     accent passes 4.5:1 both as text on card and as a button fill */
+  --accent: #60a5fa;
+  --accent-strong: #93c5fd;
+  --accent-fg: #0a0a0b;
+  --accent-soft: rgba(96, 165, 250, 0.15);
+  --accent-line: rgba(96, 165, 250, 0.3);
+
+  --ok: #22c55e;    --ok-bg: rgba(34, 197, 94, 0.14);
+  --warn: #f59e0b;  --warn-bg: rgba(245, 158, 11, 0.14);
+  --bad: #f87171;   --bad-bg: rgba(248, 113, 113, 0.14);
+  --info: #60a5fa;  --info-bg: rgba(96, 165, 250, 0.14);
+
+  --sh-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --sh: 0 1px 3px rgba(0, 0, 0, 0.5), 0 4px 12px rgba(0, 0, 0, 0.4);
+  --sh-md: 0 8px 28px rgba(0, 0, 0, 0.6);
+}
+
+/* keep native UI (scrollbars, form controls) in sync with the theme */
+html { color-scheme: light; }
+html.dark { color-scheme: dark; }
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+/* Sora for the ENTIRE app — body, headings, display text. No other font. */
+body {
+  font-family: var(--font-sans), "Sora", system-ui, sans-serif;
+  color: var(--fg);
+  font-size: 14px;
+  line-height: 1.55;
+  min-height: 100vh;
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  transition: background-color 0.2s, color 0.2s;
+}
+
+/* figures (quantities, amounts, counts, IDs) — tabular numerals, same Sora */
+.mono { font-variant-numeric: tabular-nums; }
+
+button { font-family: inherit; cursor: pointer; border: none; background: none; color: inherit; }
+a { color: inherit; text-decoration: none; }
+
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* comfortable touch targets on touch devices */
+@media (pointer: coarse) {
+  .btn, .act, .icon-btn, .nav-item, .nav-group-header, .seg button, .close-x, .cell-btn,
+  .cmdk-item, .cmdk-trigger, .toast-action { min-height: 44px; }
+  .icon-btn, .close-x { width: 44px; }
+  .mini-act { min-width: 44px; min-height: 44px; }
+}
+
+/* Respect reduced-motion: neutralize animations + transitions.
+   animation-delay must be zeroed too, or staggered fade-ups leave
+   content invisible (opacity: 0) until each delay elapses. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
