@@ -9,10 +9,32 @@ import { ProgramCardFormModal, type AvailableLot } from "./ProgramCardFormModal"
 import { ProgramCardDetailModal } from "./ProgramCardDetailModal";
 import { createProgramCard, fetchProgramCards } from "@/lib/program-cards";
 import { fetchPurchaseOrders } from "@/lib/purchase-orders";
+import { fetchActiveMasterNames } from "@/lib/masters";
 import { fetchAllShipments } from "@/lib/shipments";
 import { fetchQcCheckedLotNos } from "@/lib/dyeing-queue";
-import { fmtNum } from "@/lib/format";
+import { optimisticList } from "@/lib/optimistic";
+import { fmtNum, round2 } from "@/lib/format";
 import type { ProgramCard, ProgramCardFormValues, PurchaseOrder, Shipment } from "@/lib/types";
+
+const PC_KEY = ["program_cards"] as const;
+const LOTS_KEY = ["program_card_lots"] as const;
+
+/** Build an optimistic temp program-card row from the form values. */
+function optimisticCard(v: ProgramCardFormValues, programUid: string): ProgramCard {
+  const now = new Date().toISOString();
+  const sum = v.designs.reduce((s, d) => s + (Number(d.meter) || 0), 0);
+  const total = Number(v.total_meters);
+  return {
+    id: `temp-${now}`,
+    program_uid: programUid,
+    lot_no: v.lot_no.trim() || null,
+    po_unique_id: v.po_unique_id,
+    program_date: v.program_date || null,
+    dying_house_name: v.dying_house_name.trim() || null,
+    total_meters: Number.isFinite(total) && v.total_meters.trim() !== "" ? round2(total) : sum || null,
+    created_at: now,
+  };
+}
 
 /** Next "PG-{n}" predicted from the loaded cards (the real id is finalised on insert). */
 function predictNextProgramId(cards: ProgramCard[]): string {
@@ -58,6 +80,7 @@ export function ProgramCardsClient({
     queryFn: fetchQcCheckedLotNos,
     initialData: initialQcLots,
   });
+  const { data: dyeingHouseNames = [] } = useQuery({ queryKey: ["masters-active", "dyeing_houses"], queryFn: () => fetchActiveMasterNames("dyeing_houses") });
 
   const [search, setSearch] = useState("");
   const [formOpen, setFormOpen] = useState(false);
@@ -107,28 +130,34 @@ export function ProgramCardsClient({
       if (!s.lot_no || used.has(s.lot_no) || seen.has(s.lot_no)) continue;
       seen.add(s.lot_no);
       const po = poByUid[s.po_unique_id];
-      out.push({ lot_no: s.lot_no, po_unique_id: s.po_unique_id, po_no: po?.po_no ?? null, vendor: po?.vendor_name ?? null });
+      out.push({ lot_no: s.lot_no, po_unique_id: s.po_unique_id, po_id: po?.id ?? null, po_no: po?.po_no ?? null, vendor: po?.vendor_name ?? null });
     }
     return out;
   }, [cards, shipments, poByUid]);
 
   const nextProgramId = useMemo(() => predictNextProgramId(cards), [cards]);
 
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: PC_KEY });
+    qc.invalidateQueries({ queryKey: LOTS_KEY }); // keeps the Dyeing Queue in sync
+  };
+
   const createM = useMutation({
-    mutationFn: ({ v, file }: { v: ProgramCardFormValues; file: File | null }) => createProgramCard(v, file),
-    onSuccess: () => {
-      toast.success("Program card created");
-      qc.invalidateQueries({ queryKey: ["program_cards"] });
-      qc.invalidateQueries({ queryKey: ["program_card_lots"] }); // keeps the Dyeing Queue in sync
+    mutationFn: (v: ProgramCardFormValues) => createProgramCard(v),
+    onMutate: async (v: ProgramCardFormValues) => {
       setFormOpen(false);
+      await qc.cancelQueries({ queryKey: PC_KEY });
+      const temp = optimisticCard(v, nextProgramId);
+      return { rollback: optimisticList<ProgramCard>(qc, PC_KEY, (cur) => [temp, ...cur]) };
     },
-    onError: (e: Error) => {
-      // A failure can still mean the card was created and only its cuttings insert failed.
-      // Refresh so any such card appears and its lot leaves the dropdown — no duplicate on retry.
-      qc.invalidateQueries({ queryKey: ["program_cards"] });
-      qc.invalidateQueries({ queryKey: ["program_card_lots"] });
+    onError: (e: Error, _v, ctx) => {
+      // roll back the temp row; then refetch — a failure can still mean the card committed
+      // and only its cuttings failed, so the real card should surface (no duplicate on retry).
+      ctx?.rollback();
       toast.error(e.message);
     },
+    onSuccess: () => toast.success("Program card created"),
+    onSettled: () => invalidate(),
   });
 
   const detailPo = detail ? poByUid[detail.po_unique_id] : undefined;
@@ -230,8 +259,9 @@ export function ProgramCardsClient({
         availableLots={availableLots}
         nextProgramId={nextProgramId}
         saving={createM.isPending}
+        dyeingHouseSuggestions={dyeingHouseNames}
         onClose={() => setFormOpen(false)}
-        onSave={(v, file) => createM.mutate({ v, file })}
+        onSave={(v) => createM.mutate(v)}
       />
 
       {detail && (

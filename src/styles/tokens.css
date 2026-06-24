@@ -24,6 +24,7 @@
   --accent-strong: #1d4ed8; /* hover/pressed */
   --accent-fg: #ffffff;
   --accent-soft: rgba(37, 99, 235, 0.08);
+  --accent-bg: rgba(37, 99, 235, 0.08);   /* alias of -soft so every tone has a -bg (icon tiles) */
   --accent-line: rgba(37, 99, 235, 0.22);
 
   /* status — dark enough to pass 4.5:1 as text on their own tints */
@@ -31,6 +32,8 @@
   --warn: #b45309;  --warn-bg: rgba(180, 83, 9, 0.1);
   --bad: #b91c1c;   --bad-bg: rgba(185, 28, 28, 0.1);
   --info: #1d4ed8;  --info-bg: rgba(29, 78, 216, 0.08);
+  /* categorical chart palette — distinct hues for multi-series data viz (charts only) */
+  --c-order: #2563eb;  --c-prod: #f59e0b;  --c-ready: #7c3aed;  --c-closed: #16a34a;
 
   /* elevation — cards must visibly separate from the page */
   --sh-sm: 0 1px 2px rgba(24, 24, 27, 0.06);
@@ -57,12 +60,14 @@ html.dark {
   --accent-strong: #93c5fd;
   --accent-fg: #0a0a0b;
   --accent-soft: rgba(96, 165, 250, 0.15);
+  --accent-bg: rgba(96, 165, 250, 0.15);
   --accent-line: rgba(96, 165, 250, 0.3);
 
   --ok: #22c55e;    --ok-bg: rgba(34, 197, 94, 0.14);
   --warn: #f59e0b;  --warn-bg: rgba(245, 158, 11, 0.14);
   --bad: #f87171;   --bad-bg: rgba(248, 113, 113, 0.14);
   --info: #60a5fa;  --info-bg: rgba(96, 165, 250, 0.14);
+  --c-order: #60a5fa;  --c-prod: #fbbf24;  --c-ready: #a78bfa;  --c-closed: #4ade80;
 
   --sh-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
   --sh: 0 1px 3px rgba(0, 0, 0, 0.5), 0 4px 12px rgba(0, 0, 0, 0.4);
@@ -98,7 +103,7 @@ a { color: inherit; text-decoration: none; }
 /* comfortable touch targets on touch devices */
 @media (pointer: coarse) {
   .btn, .act, .icon-btn, .nav-item, .nav-group-header, .seg button, .close-x, .cell-btn,
-  .cmdk-item, .cmdk-trigger, .toast-action { min-height: 44px; }
+  .cmdk-item, .cmdk-trigger, .toast-action, .path-pill { min-height: 44px; }
   .icon-btn, .close-x { width: 44px; }
   .mini-act { min-width: 44px; min-height: 44px; }
 }

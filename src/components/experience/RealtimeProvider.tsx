@@ -22,7 +22,10 @@ const TABLE_KEYS: Record<string, readonly unknown[][]> = {
   program_card_designs: [["program-card-designs"]],
   qc_checklist: [["qc_inspections"], ["qc_lots"]],
   reissue_return: [["reissue_return"]],
-  warehouse_log: [["warehouse_log"]],
+  warehouse_log: [["warehouse_all"]],
+  final_receipts: [["final_receipts"]],
+  dyeing_followups: [["dyeing_followups"]],
+  fabric_receipts: [["fabric_receipts"]],
   profiles: [["team"]],
 };
 

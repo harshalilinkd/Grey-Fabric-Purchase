@@ -1,5 +1,5 @@
 import { createClient } from "@/lib/supabase/client";
-import type { ReissueReturn } from "@/lib/types";
+import type { ReissueReturn, ReissueStatus } from "@/lib/types";
 
 const RR_COLUMNS =
   "id, reissue_id, original_po_unique_id, original_lot_no, original_design_no, reissue_date, reissue_qty, reason, new_lot_no, status, created_at";
@@ -32,5 +32,15 @@ export async function markReturned(id: string): Promise<void> {
     .from("reissue_return")
     .update({ status: "Returned", new_lot_no: null })
     .eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+/** Restore a row to a prior {status, new_lot_no} — used by the Undo on assign/return. */
+export async function updateReissueState(
+  id: string,
+  patch: { status: ReissueStatus; new_lot_no: string | null },
+): Promise<void> {
+  const supabase = createClient();
+  const { error } = await supabase.from("reissue_return").update(patch).eq("id", id);
   if (error) throw new Error(error.message);
 }

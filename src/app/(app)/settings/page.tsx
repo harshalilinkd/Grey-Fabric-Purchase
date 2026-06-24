@@ -1,5 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
-import { TeamClient } from "@/components/settings/TeamClient";
+import { SettingsClient } from "@/components/settings/SettingsClient";
 import type { TeamMember } from "@/lib/types";
 
 export default async function SettingsPage() {
@@ -14,5 +14,5 @@ export default async function SettingsPage() {
     .select("*")
     .order("created_at", { ascending: true });
 
-  return <TeamClient initialTeam={(team ?? []) as TeamMember[]} selfId={user?.id ?? ""} />;
+  return <SettingsClient initialTeam={(team ?? []) as TeamMember[]} selfId={user?.id ?? ""} />;
 }

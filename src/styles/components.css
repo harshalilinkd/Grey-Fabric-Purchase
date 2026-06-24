@@ -147,6 +147,8 @@ td .dim { color: var(--muted); }
 .field input:focus, .field select:focus, .field textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .field-row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
 @media (max-width: 640px) { .field-row-3 { grid-template-columns: 1fr; } }
+.field-row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 640px) { .field-row-2 { grid-template-columns: 1fr; } }
 .subtle-note { display: flex; gap: 9px; align-items: flex-start; font-size: 12px; color: var(--fg-2); background: var(--card-2); padding: 11px 13px; border-radius: 10px; margin-top: 6px; }
 .subtle-note svg { flex-shrink: 0; margin-top: 1px; color: var(--accent); }
 
@@ -246,15 +248,17 @@ tr.clickable { cursor: pointer; }
 /* keyboard focus lands on the row's Details button — light up the whole row with it */
 tr.clickable:focus-within { background: var(--card-2); }
 
-/* native file input, themed to match .field controls */
-.field input[type="file"] { cursor: pointer; padding: 8px 10px; font-size: 13px; }
-.field input[type="file"]::file-selector-button {
+/* native file input, themed to match .field controls (also the per-colour cutting input) */
+.field input[type="file"], .pcd-cut input[type="file"] { cursor: pointer; padding: 8px 10px; }
+.field input[type="file"]::file-selector-button,
+.pcd-cut input[type="file"]::file-selector-button {
   font: inherit; font-weight: 600; font-size: 12px;
   margin-right: 11px; padding: 6px 11px; border-radius: 7px;
   border: 1px solid var(--border); background: var(--card-2); color: var(--fg); cursor: pointer;
   transition: background 0.12s, border-color 0.12s;
 }
-.field input[type="file"]::file-selector-button:hover { background: var(--bg); border-color: var(--border-strong); }
+.field input[type="file"]::file-selector-button:hover,
+.pcd-cut input[type="file"]::file-selector-button:hover { background: var(--bg); border-color: var(--border-strong); }
 
 /* repeatable design-cuttings editor */
 .designs-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 4px 0 8px; }
@@ -264,13 +268,13 @@ tr.clickable:focus-within { background: var(--card-2); }
 .design-row { display: grid; grid-template-columns: 1.2fr 1fr 0.8fr 32px; gap: 8px; align-items: center; }
 .design-row-head { padding: 0 2px; }
 .design-row-head span { font-size: 10.5px; font-weight: 600; letter-spacing: 0.6px; text-transform: uppercase; color: var(--muted); }
-.design-row .di {
+.design-row .di, .cutting-top .di, .fab-row .di, .rq-top .di, .rq-fail .di {
   width: 100%; background: var(--inset); border: 1px solid var(--border);
   border-radius: 9px; padding: 9px 11px; font-size: 13.5px; font-family: inherit;
   color: var(--fg); outline: none; transition: border-color 0.13s, box-shadow 0.13s;
 }
-.design-row .di::placeholder { color: var(--muted); }
-.design-row .di:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.design-row .di::placeholder, .cutting-top .di::placeholder, .fab-row .di::placeholder, .rq-top .di::placeholder { color: var(--muted); }
+.design-row .di:focus, .cutting-top .di:focus, .fab-row .di:focus, .rq-top .di:focus, .rq-fail .di:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .add-design { margin-top: 10px; }
 @media (max-width: 560px) {
   .design-row { grid-template-columns: 1fr 1fr 0.8fr 32px; gap: 6px; }
@@ -424,6 +428,169 @@ tr.clickable:focus-within { background: var(--card-2); }
   transition: background 0.12s;
 }
 .toast-action:hover { background: var(--accent-line); }
+
+/* ---------- SMART PURCHASE-ORDER FORM ---------- */
+/* sourcing-path pill row (also reused for the direct new/old choice) */
+.path-pills { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 8px; }
+.path-pill {
+  padding: 8px 14px; min-height: 38px; border-radius: 9px;
+  border: 1px solid var(--border); background: var(--card); color: var(--fg-2);
+  font-size: 13px; font-weight: 600;
+  transition: border-color 0.13s, background 0.13s, color 0.13s;
+}
+.path-pill:hover { border-color: var(--border-strong); color: var(--fg); }
+.path-pill.on { border-color: var(--accent-line); background: var(--accent-soft); color: var(--accent); }
+.path-blurb { font-size: 12.5px; color: var(--muted); margin: 0 0 8px; line-height: 1.5; }
+
+/* path-specific panel */
+.path-panel { border: 1px solid var(--border); border-radius: 12px; background: var(--inset); padding: 14px 16px; margin-top: 8px; }
+.imported-note { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+/* live colour-allocation indicator */
+.alloc { font-size: 12px; font-weight: 600; color: var(--muted); }
+.alloc.ok { color: var(--ok); }
+.alloc.warn { color: var(--warn); }
+
+/* read-only auto code cell in the colour editor */
+.design-row .di.code { background: var(--card-2); color: var(--fg-2); text-align: center; font-weight: 700; cursor: default; }
+
+/* ---------- RECEIVE & QC (finished-goods receipt) ---------- */
+.qc-checks { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 4px 0 2px; }
+.qc-check { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; font-weight: 500; color: var(--fg-2); cursor: pointer; }
+.qc-check input { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
+.rq-rows { display: flex; flex-direction: column; gap: 8px; }
+.rq-item { border: 1px solid var(--border); border-radius: 10px; background: var(--inset); padding: 10px 12px; }
+.rq-top { display: grid; grid-template-columns: 1.1fr 1fr 0.8fr 0.9fr 30px; gap: 8px; align-items: center; }
+.rq-status { cursor: pointer; font-weight: 600; }
+.rq-status.fail { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 40%, var(--border)); }
+.rq-status.pass { color: var(--ok); }
+.rq-fail { margin-top: 9px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.rq-fail-label { font-size: 12px; font-weight: 600; color: var(--fg-2); }
+.rq-fail .di { max-width: 120px; }
+.rq-hint { font-size: 12px; color: var(--muted); }
+.rq-hint b { color: var(--fg-2); }
+.fail-box { margin-top: 12px; border: 1px solid color-mix(in srgb, var(--bad) 30%, var(--border)); background: var(--bad-bg); border-radius: 10px; padding: 13px 14px; }
+@media (max-width: 560px) {
+  .rq-top { grid-template-columns: 1fr 1fr; }
+  .rq-top .mini-act { grid-column: 2; justify-self: end; }
+}
+
+/* colour-count chip in the PO table */
+.count-chip {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 22px; height: 20px; padding: 0 7px; border-radius: 100px;
+  background: var(--accent-soft); color: var(--accent); font-size: 11px; font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- PROGRAM CARD MODAL: bounded scroll so the body scrolls + foot/add stay reachable ----------
+   The form wraps body+foot; without flex constraints a tall form overflows and .modal's overflow:hidden
+   clips it (nothing scrolls). Make the form fill the modal, the body the only scroller, the foot pinned. */
+.modal.pcd-modal > form { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow: hidden; }
+.modal.pcd-modal .modal-body { flex: 1 1 auto; min-height: 0; }
+.modal.pcd-modal .modal-foot { flex: 0 0 auto; }
+
+/* ---------- PROGRAM CARD: small auto/read-only field hint ---------- */
+.field-hint { display: block; font-size: 11px; color: var(--muted); margin-top: 5px; }
+.field input:disabled, .field select:disabled, .field input[readonly] {
+  background: var(--card-2); color: var(--fg-2); cursor: default; opacity: 0.9;
+}
+
+/* ---------- PROGRAM CARD: DESIGN DETAILS ---------- */
+.pcd-section { border: 1px solid var(--border); border-radius: 12px; background: var(--inset); padding: 14px 16px; margin-top: 8px; }
+.pcd-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.pcd-head h4 { font-size: 14px; font-weight: 700; color: var(--fg); letter-spacing: -0.2px; }
+.pcd-rows { display: flex; flex-direction: column; gap: 12px; }
+.pcd-row { background: var(--card); border: 1px solid var(--border); border-radius: 11px; box-shadow: var(--sh-sm); padding: 13px 15px; }
+.pcd-row-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+.pcd-row-title { font-size: 13px; font-weight: 600; color: var(--fg); display: inline-flex; align-items: center; gap: 8px; }
+.pcd-code {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 22px; height: 20px; padding: 0 7px; border-radius: 6px;
+  background: var(--accent-soft); color: var(--accent); font-size: 11px; font-weight: 700;
+}
+/* subtle ghost remove (neutral, reddens only on hover) — matches the app's icon-button language */
+.pcd-del {
+  width: 30px; height: 30px; border-radius: 8px; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid transparent; background: transparent; color: var(--muted); cursor: pointer;
+  transition: color 0.12s, background 0.12s;
+}
+.pcd-del:hover { color: var(--bad); background: var(--bad-bg); }
+.pcd-del:disabled { opacity: 0.4; cursor: not-allowed; color: var(--muted); background: transparent; }
+/* "Add row" lives in its OWN fixed bar between the scrolling body and the foot, so it is ALWAYS
+   visible no matter how many rows are added (no sticky edge-cases, never overlaps the last row). */
+.pcd-addbar { flex: 0 0 auto; padding: 12px 22px; border-top: 1px solid var(--border); background: var(--card); }
+/* full-width dashed affordance — quiet until hovered, then lights to the cobalt accent */
+.pcd-add {
+  width: 100%; display: inline-flex; align-items: center; justify-content: center;
+  gap: 7px; padding: 11px 14px; border: 1px dashed var(--border-strong); border-radius: 10px;
+  background: transparent; color: var(--fg-2); font-size: 13px; font-weight: 600; font-family: inherit;
+  cursor: pointer; transition: border-color 0.13s, color 0.13s, background 0.13s;
+}
+.pcd-add:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+.pcd-add:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.pcd-fields { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+.pcd-fields .field { margin-bottom: 0; }
+.pcd-cut { margin-top: 12px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.pcd-cut-label { font-size: 12px; font-weight: 600; color: var(--fg-2); }
+.pcd-cut-opt { font-weight: 500; color: var(--muted); }
+.pcd-cut input[type="file"] { font-size: 12px; color: var(--fg-2); max-width: 100%; }
+.white-note { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--ok); }
+.cutting-link { display: inline-flex; align-items: center; gap: 5px; color: var(--accent); font-size: 12px; font-weight: 600; }
+.cutting-link:hover { text-decoration: underline; }
+@media (max-width: 560px) {
+  .pcd-fields { grid-template-columns: 1fr; gap: 10px; }
+}
+@media (pointer: coarse) { .pcd-del { width: 40px; height: 40px; } }
+
+/* ---------- WAREHOUSE READY-GOODS METRICS ---------- */
+.wh-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(208px, 1fr)); gap: 14px; margin-bottom: 18px; }
+.wh-metric {
+  background: var(--card); border: 1px solid var(--border); border-radius: 14px;
+  box-shadow: var(--sh); padding: 18px; animation: rise 0.45s backwards;
+}
+.wh-metric:nth-child(2) { animation-delay: 0.05s; }
+.wh-metric:nth-child(3) { animation-delay: 0.1s; }
+.wh-mtop { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.wh-micon {
+  width: 38px; height: 38px; border-radius: 10px;
+  background: var(--accent-soft); color: var(--accent);
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.wh-mlabel { font-size: 11px; font-weight: 600; letter-spacing: 0.6px; text-transform: uppercase; color: var(--muted); }
+.wh-mvalue { font-size: 28px; font-weight: 700; letter-spacing: -0.8px; line-height: 1.1; color: var(--fg); }
+.wh-mvalue small { font-size: 14px; color: var(--muted); font-weight: 600; }
+.wh-micon.bad { background: var(--bad-bg); color: var(--bad); }
+.wh-mvalue.bad { color: var(--bad); }
+
+/* ---------- FABRIC RECEIPTS (received vs programmed) ---------- */
+.fab-rows { display: flex; flex-direction: column; gap: 8px; }
+.fab-row { display: grid; grid-template-columns: 1.5fr 0.9fr 0.9fr 0.9fr; gap: 10px; align-items: center; }
+.fab-row-head { padding: 0 2px; }
+.fab-row-head span { font-size: 10.5px; font-weight: 600; letter-spacing: 0.6px; text-transform: uppercase; color: var(--muted); }
+.fab-design { font-size: 13px; color: var(--fg); }
+.fab-design small { color: var(--muted); }
+.fab-prog { font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.fab-diff { font-size: 11.5px; font-weight: 600; color: var(--muted); }
+.fab-diff.ok { color: var(--ok); }
+.fab-diff.warn { color: var(--warn); }
+.fab-short { color: var(--warn); }
+@media (max-width: 560px) { .fab-row { grid-template-columns: 1.3fr 0.8fr 0.9fr 0.8fr; gap: 6px; } .fab-row-head { display: none; } }
+
+/* ---------- MASTER LISTS (settings) ---------- */
+.master-add { display: flex; gap: 8px; margin-bottom: 4px; }
+.master-add input {
+  flex: 1; max-width: 360px; background: var(--inset); border: 1px solid var(--border);
+  border-radius: 10px; padding: 9px 12px; font-size: 13.5px; color: var(--fg);
+  outline: none; transition: border-color 0.13s, box-shadow 0.13s;
+}
+.master-add input::placeholder { color: var(--muted); }
+.master-add input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.inline-edit {
+  width: 100%; max-width: 280px; background: var(--inset); border: 1px solid var(--accent);
+  border-radius: 8px; padding: 6px 9px; font-size: 13px; color: var(--fg); outline: none;
+}
 
 /* ---------- TEAM MANAGEMENT (settings) ---------- */
 .member-cell { display: inline-flex; align-items: center; gap: 10px; }

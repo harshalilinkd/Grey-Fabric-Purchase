@@ -18,7 +18,6 @@ export const GO_TO: Record<string, { path: string; label: string }> = {
   p: { path: "/purchase-orders", label: "Purchase Orders" },
   r: { path: "/grey-receipts", label: "Grey House Follow Up" },
   q: { path: "/dyeing-queue", label: "Dyeing Queue" },
-  c: { path: "/program-cards", label: "Program Cards" },
   i: { path: "/qc-inspection", label: "QC Inspection" },
   x: { path: "/reissue-return", label: "Reissue & Return" },
   w: { path: "/warehouse", label: "Warehouse" },
@@ -54,6 +53,9 @@ export function KeyboardManager() {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       if (h.paletteOpen) return; // palette owns its own keys
       if (isTypingTarget(e.target)) return; // don't hijack typing
+      // don't fire page shortcuts under an open form/confirm modal (focus may be on a button,
+      // not an input) — every modal renders a .overlay backdrop
+      if (document.querySelector(".overlay")) return;
 
       // pending "g" chord → navigate
       if (gPending.current && Date.now() - gPending.current < 1200) {

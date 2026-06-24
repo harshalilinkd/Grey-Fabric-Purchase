@@ -27,3 +27,7 @@ yarn-error.log*
 
 # vercel
 .vercel
+
+# scratch / local workflow scripts
+.gap.mjs
+.v3-review.mjs

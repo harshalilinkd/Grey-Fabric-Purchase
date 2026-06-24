@@ -60,7 +60,7 @@ export function ReissueDetailModal({
           <div className="sum">
             <div className="sum-row"><span>PO No</span><b className="mono">{po?.po_no ?? "—"}</b></div>
             <div className="sum-row"><span>Vendor</span><b>{po?.vendor_name ?? "—"}</b></div>
-            <div className="sum-row"><span>Quality</span><b>{po?.quality ?? "—"}</b></div>
+            <div className="sum-row"><span>Quality name</span><b>{po?.quality_name ?? po?.quality ?? "—"}</b></div>
             <div className="sum-row"><span>Rate</span><b className="mono">{po?.rate == null ? "—" : fmtAmount(po.rate)}</b></div>
           </div>
 

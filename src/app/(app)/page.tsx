@@ -1,119 +1,57 @@
-import Link from "next/link";
-import { Icon } from "@/components/ui/Icon";
-import { CountUp } from "@/components/ui/CountUp";
+import { createClient } from "@/lib/supabase/server";
+import { DashboardClient } from "@/components/dashboard/DashboardClient";
+import type {
+  DyeingFollowup,
+  FabricReceipt,
+  FinalReceipt,
+  ProgramCard,
+  PurchaseOrder,
+  QcInspection,
+  ReissueReturn,
+  Shipment,
+  WarehouseLog,
+} from "@/lib/types";
 
-/**
- * Dashboard. Figures are demo data for now (matching the prototype) and will be
- * replaced with live Supabase queries once auth + data fetching are wired up.
- */
+const PO_COLUMNS =
+  "id, unique_id, vendor_name, process, quality, order_date, order_no, po_no, delivery_days, quantity, rate, amount, created_at, updated_at, sourcing_path, quality_name, selling_merchant_no, vendor_design_no, sampling_status, cad_ref, handloom_ref, direct_subtype";
+const SH_COLUMNS = "id, shipment_id, po_unique_id, shipment_date, sent_quantity, lot_no, created_at";
+const PC_COLUMNS =
+  "id, program_uid, lot_no, po_unique_id, program_date, dying_house_name, total_meters, color_cutting_attached, total_color_cutting, delivery_days, pdf_url, created_at";
+const QC_COLUMNS =
+  "id, check_id, program_uid, lot_no, design_no, checked_date, meter_qty_check, colour_check, strength_check, fabric_quality_check, overall_status, passed_qty, failed_qty, created_at";
+const WH_COLUMNS = "id, store_id, po_unique_id, lot_no, design_no, passed_qty, stored_date, status, created_at";
+const RR_COLUMNS =
+  "id, reissue_id, original_po_unique_id, original_lot_no, original_design_no, reissue_date, reissue_qty, reason, new_lot_no, status, created_at";
+const FAB_COLUMNS = "id, receipt_id, lot_no, po_unique_id, design_no, programmed_meters, received_meters, received_date, remark, created_at";
+const DF_COLUMNS = "id, followup_id, lot_no, po_unique_id, dying_house_name, remaining_meters, next_followup_date, remark, created_at";
+const FR_COLUMNS = "id, receipt_id, lot_no, po_unique_id, final_qty, status, remark, received_date, created_at";
 
-type Kpi = {
-  href: string;
-  icon: string;
-  label: string;
-  value: number;
-  suffix?: string;
-  sub: string;
-  trend?: { tone: "up" | "warn"; text: string };
-};
+export default async function DashboardPage() {
+  const supabase = await createClient();
 
-const KPIS: Kpi[] = [
-  { href: "/purchase-orders", icon: "file", label: "Open POs", value: 17, sub: "₹ 1.06 Cr ordered value", trend: { tone: "up", text: "↑ 12%" } },
-  { href: "/grey-receipts", icon: "box", label: "Grey received (Jun)", value: 48200, suffix: " m", sub: "across 16 lots" },
-  { href: "/dyeing-queue", icon: "lines", label: "Lots in dyeing", value: 9, sub: "3 pending program" },
-  { href: "/qc-inspection", icon: "checkCircle", label: "Pending QC", value: 5, sub: "awaiting inspection", trend: { tone: "warn", text: "3 due" } },
-  { href: "/warehouse", icon: "warehouse", label: "Warehouse stock", value: 31440, suffix: " m", sub: "QC-passed fabric" },
-];
+  const [po, sh, pc, qc, wh, rr, fab, df, fr] = await Promise.all([
+    supabase.from("purchase_orders").select(PO_COLUMNS).order("created_at", { ascending: false }),
+    supabase.from("shipments").select(SH_COLUMNS).order("created_at", { ascending: false }),
+    supabase.from("program_cards").select(PC_COLUMNS).order("created_at", { ascending: false }),
+    supabase.from("qc_checklist").select(QC_COLUMNS).order("created_at", { ascending: false }),
+    supabase.from("warehouse_log").select(WH_COLUMNS).order("created_at", { ascending: false }),
+    supabase.from("reissue_return").select(RR_COLUMNS).order("created_at", { ascending: false }),
+    supabase.from("fabric_receipts").select(FAB_COLUMNS).order("created_at", { ascending: false }),
+    supabase.from("dyeing_followups").select(DF_COLUMNS).order("created_at", { ascending: false }),
+    supabase.from("final_receipts").select(FR_COLUMNS).order("created_at", { ascending: false }),
+  ]);
 
-/* One restrained accent for the funnel; status colors mark the done/waiting ends. */
-const FUNNEL = [
-  { label: "Received", color: "var(--accent)", width: 100, count: 16 },
-  { label: "Programmed", color: "var(--accent)", width: 81, count: 13 },
-  { label: "In dyeing", color: "var(--accent)", width: 56, count: 9 },
-  { label: "Received back", color: "var(--accent)", width: 44, count: 7 },
-  { label: "Warehoused", color: "var(--ok)", width: 31, count: 5 },
-];
-
-const FOLLOWUPS = [
-  { tone: "bad", lead: "Lot 31", rest: "· Das dyeing house", time: "Overdue by 2 days" },
-  { tone: "warn", lead: "PO 0051", rest: "· RT Fabric grey receipt", time: "Due today" },
-  { tone: "info", lead: "Lot 24", rest: "· QC follow-up", time: "In 1 day" },
-] as const;
-
-export default function DashboardPage() {
   return (
-    <>
-      <div className="page-head">
-        <h1>Dashboard</h1>
-        <p>Live overview of your grey fabric pipeline</p>
-      </div>
-
-      <div className="kpi-grid">
-        {KPIS.map((k) => (
-          <Link key={k.href} href={k.href} className="kpi">
-            <div className="kpi-top">
-              <div className="kpi-icon">
-                <Icon name={k.icon} />
-              </div>
-              {k.trend && <span className={`trend ${k.trend.tone}`}>{k.trend.text}</span>}
-            </div>
-            <div className="kpi-label">{k.label}</div>
-            <div className="kpi-value mono">
-              <CountUp value={k.value} />
-              {k.suffix && <small>{k.suffix}</small>}
-            </div>
-            <div className="kpi-sub">{k.sub}</div>
-          </Link>
-        ))}
-      </div>
-
-      <div className="grid-2">
-        <div className="panel b">
-          <div className="panel-head">
-            <h3>Lot stage funnel</h3>
-            <span className="tag">This month</span>
-          </div>
-          <div className="panel-body">
-            {FUNNEL.map((f) => (
-              <div className="fr" key={f.label}>
-                <div className="fl">
-                  <span className="fd" style={{ background: f.color }} />
-                  {f.label}
-                </div>
-                <div className="fb">
-                  <div className="ff" style={{ width: `${f.width}%`, background: f.color }} />
-                </div>
-                <div className="fc mono">{f.count}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="panel c">
-          <div className="panel-head">
-            <h3>Follow-ups due</h3>
-            <span className="shuttle" />
-          </div>
-          <div className="panel-body" style={{ paddingTop: 9 }}>
-            {FOLLOWUPS.map((f) => (
-              <div className="li" key={f.lead}>
-                <div
-                  className="li-ic"
-                  style={{ background: `var(--${f.tone}-bg)`, color: `var(--${f.tone})` }}
-                >
-                  <Icon name="clock" />
-                </div>
-                <div className="li-b">
-                  <p>
-                    <b>{f.lead}</b> {f.rest}
-                  </p>
-                  <div className="li-t">{f.time}</div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    </>
+    <DashboardClient
+      initialPos={(po.data ?? []) as PurchaseOrder[]}
+      initialShipments={(sh.data ?? []) as Shipment[]}
+      initialPrograms={(pc.data ?? []) as ProgramCard[]}
+      initialQc={(qc.data ?? []) as QcInspection[]}
+      initialWarehouse={(wh.data ?? []) as WarehouseLog[]}
+      initialReissues={(rr.data ?? []) as ReissueReturn[]}
+      initialFabric={(fab.data ?? []) as FabricReceipt[]}
+      initialFollowups={(df.data ?? []) as DyeingFollowup[]}
+      initialFinals={(fr.data ?? []) as FinalReceipt[]}
+    />
   );
 }

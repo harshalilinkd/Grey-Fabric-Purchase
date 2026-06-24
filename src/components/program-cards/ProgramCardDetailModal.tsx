@@ -42,10 +42,12 @@ export function ProgramCardDetailModal({
             <div className="sum-row"><span>Lot No</span><b className="mono">{card.lot_no ?? "—"}</b></div>
             <div className="sum-row"><span>Dyeing house</span><b>{card.dying_house_name ?? "—"}</b></div>
             <div className="sum-row"><span>Program date</span><b>{fmtDate(card.program_date)}</b></div>
+            <div className="sum-row"><span>Color</span><b>{card.color ?? "—"}</b></div>
             <div className="sum-row"><span>Total meters</span><b className="mono">{fmtNum(card.total_meters)} m</b></div>
+            <div className="sum-row"><span>Delivery days</span><b className="mono">{card.delivery_days ?? "—"}</b></div>
           </div>
 
-          <div className="sum-title">Design cuttings</div>
+          <div className="sum-title">Colour cuttings</div>
           {isLoading ? (
             <div className="skeleton" style={{ height: 96 }} />
           ) : isError ? (
@@ -56,7 +58,7 @@ export function ProgramCardDetailModal({
           ) : designs.length > 0 ? (
             <table className="mini-table">
               <thead>
-                <tr><th>Design no</th><th>Colour</th><th style={{ textAlign: "right" }}>Meters</th></tr>
+                <tr><th>Design No</th><th>Colour</th><th style={{ textAlign: "right" }}>Meters</th><th>Cutting</th></tr>
               </thead>
               <tbody>
                 {designs.map((d) => (
@@ -64,21 +66,21 @@ export function ProgramCardDetailModal({
                     <td className="mono">{d.design_no ?? "—"}</td>
                     <td>{d.color ?? "—"}</td>
                     <td className="num mono">{fmtNum(d.meter)}</td>
+                    <td>
+                      {d.cutting_url ? (
+                        <a className="cutting-link" href={d.cutting_url} target="_blank" rel="noopener noreferrer">
+                          <Icon name="file" size={13} />View
+                        </a>
+                      ) : (
+                        <span className="dim">{(d.color ?? "").trim().toLowerCase() === "white" ? "White" : "—"}</span>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           ) : (
-            <p className="muted-note">No design cuttings recorded for this program.</p>
-          )}
-
-          <div className="sum-title">Colour cutting (PDF)</div>
-          {card.pdf_url ? (
-            <a className="act" href={card.pdf_url} target="_blank" rel="noopener noreferrer">
-              <Icon name="file" size={15} />View colour cutting
-            </a>
-          ) : (
-            <p className="muted-note">No PDF attached.</p>
+            <p className="muted-note">No colour cuttings recorded for this program.</p>
           )}
         </div>
 

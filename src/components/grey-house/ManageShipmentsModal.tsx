@@ -6,6 +6,7 @@ import { Icon } from "@/components/ui/Icon";
 import { useToast } from "@/components/ui/Toast";
 import { fetchPoShipments } from "@/lib/purchase-orders";
 import { createShipment, deleteShipment, updateShipment } from "@/lib/shipments";
+import { optimisticList, optimisticPatch, optimisticRemove } from "@/lib/optimistic";
 import { fmtDate, fmtNum } from "@/lib/format";
 import { useEscClose } from "@/lib/use-esc-close";
 import type { PurchaseOrder, Shipment } from "@/lib/types";
@@ -55,33 +56,62 @@ export function ManageShipmentsModal({
     }
   };
 
+  // Optimistic on the modal's own ["po-shipments", uid] history (instant); the Grey House
+  // table (shipments_all) refreshes on the onSettled invalidate. warnIfOver uses the
+  // pre-mutation projection captured in onMutate. resetForm runs in onSuccess so the
+  // mutationFn still reads qty/lot/editingId.
   const createM = useMutation({
     mutationFn: () => createShipment(po.unique_id, { sent_quantity: numOrNull(qty), lot_no: lot.trim() || null }),
-    onSuccess: () => {
-      toast.success("Shipment logged");
-      warnIfOver(totalSent + (Number(qty) || 0));
-      invalidate();
-      resetForm();
+    onMutate: async () => {
+      const projected = totalSent + (Number(qty) || 0);
+      await qc.cancelQueries({ queryKey: key });
+      const stamp = Date.now();
+      const temp = {
+        id: `temp-${stamp}`, shipment_id: `SHID-${stamp}`, po_unique_id: po.unique_id,
+        shipment_date: new Date().toISOString().slice(0, 10), sent_quantity: numOrNull(qty),
+        lot_no: lot.trim() || null, created_at: new Date().toISOString(),
+      } as Shipment;
+      const rollback = optimisticList<Shipment>(qc, key, (cur) => [...cur, temp]);
+      return { rollback, projected };
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: (e: Error, _v, ctx) => { ctx?.rollback(); toast.error(e.message); },
+    onSuccess: (_d, _v, ctx) => { toast.success("Shipment logged"); if (ctx) warnIfOver(ctx.projected); resetForm(); },
+    onSettled: () => invalidate(),
   });
 
   const updateM = useMutation({
     mutationFn: () => updateShipment(editingId!, { sent_quantity: numOrNull(qty), lot_no: lot.trim() || null }),
-    onSuccess: () => {
-      toast.success("Shipment updated");
+    onMutate: async () => {
       const old = history.find((h) => h.id === editingId)?.sent_quantity ?? 0;
-      warnIfOver(totalSent - old + (Number(qty) || 0));
-      invalidate();
-      resetForm();
+      const projected = totalSent - old + (Number(qty) || 0);
+      await qc.cancelQueries({ queryKey: key });
+      const rollback = optimisticPatch<Shipment>(qc, key, (s) => s.id === editingId, { sent_quantity: numOrNull(qty), lot_no: lot.trim() || null });
+      return { rollback, projected };
     },
+    onError: (e: Error, _v, ctx) => { ctx?.rollback(); toast.error(e.message); },
+    onSuccess: (_d, _v, ctx) => { toast.success("Shipment updated"); if (ctx) warnIfOver(ctx.projected); resetForm(); },
+    onSettled: () => invalidate(),
+  });
+
+  const restoreM = useMutation({
+    mutationFn: (s: Shipment) => createShipment(po.unique_id, { sent_quantity: s.sent_quantity, lot_no: s.lot_no }),
+    onSuccess: () => { toast.success("Shipment restored"); invalidate(); },
     onError: (e: Error) => toast.error(e.message),
   });
 
   const deleteM = useMutation({
     mutationFn: (id: string) => deleteShipment(id),
-    onSuccess: () => { toast.success("Shipment deleted"); invalidate(); setDeleteTarget(null); },
-    onError: (e: Error) => { toast.error(e.message); setDeleteTarget(null); },
+    onMutate: async (id: string) => {
+      setDeleteTarget(null);
+      await qc.cancelQueries({ queryKey: key });
+      const removed = history.find((h) => h.id === id);
+      const rollback = optimisticRemove<Shipment>(qc, key, (s) => s.id === id);
+      return { rollback, removed };
+    },
+    onError: (e: Error, _id, ctx) => { ctx?.rollback(); toast.error(e.message); },
+    onSuccess: (_d, _id, ctx) =>
+      toast.success("Shipment deleted", ctx?.removed ? { action: { label: "Undo", onClick: () => restoreM.mutate(ctx.removed!) } } : undefined),
+    onSettled: () => invalidate(),
   });
 
   const startEdit = (s: Shipment) => {

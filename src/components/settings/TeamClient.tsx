@@ -1,9 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Icon } from "@/components/ui/Icon";
 import { useToast } from "@/components/ui/Toast";
+import { usePagePrimaryAction, usePageSearchInput } from "@/components/experience/CommandProvider";
 import {
   createTeamMember,
   deleteTeamMember,
@@ -40,6 +41,12 @@ export function TeamClient({ initialTeam, selfId }: { initialTeam: TeamMember[];
   const [editing, setEditing] = useState<TeamMember | null>(null);
   const [deactivateTarget, setDeactivateTarget] = useState<TeamMember | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<TeamMember | null>(null);
+
+  const searchRef = useRef<HTMLInputElement | null>(null);
+  usePageSearchInput(searchRef);
+  // "Add member" is the page primary action (n key + palette) — only super admins can add.
+  const openAdd = useCallback(() => { if (isSuper) { setEditing(null); setFormMode("add"); } }, [isSuper]);
+  usePagePrimaryAction("Add member", openAdd);
 
   useEscClose(!!deactivateTarget, () => setDeactivateTarget(null));
   useEscClose(!!deleteTarget, () => setDeleteTarget(null));
@@ -103,27 +110,21 @@ export function TeamClient({ initialTeam, selfId }: { initialTeam: TeamMember[];
 
   return (
     <>
-      <div className="page-head row">
-        <div>
-          <h1>Settings</h1>
-          <p>Team access &amp; workspace preferences</p>
-        </div>
-        {isSuper && (
-          <button className="btn btn-primary" onClick={() => { setEditing(null); setFormMode("add"); }}>
-            <Icon name="plus" size={15} />Add member
-          </button>
-        )}
-      </div>
-
-      <div className="toolbar">
+      <div className="toolbar split">
         <div className="search">
           <Icon name="search" size={15} />
           <input
+            ref={searchRef}
             placeholder="Search name, email, role, department, status…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
+        {isSuper && (
+          <button className="btn btn-primary" onClick={openAdd}>
+            <Icon name="plus" size={15} />Add member
+          </button>
+        )}
       </div>
 
       <div className="panel first">
@@ -135,6 +136,7 @@ export function TeamClient({ initialTeam, selfId }: { initialTeam: TeamMember[];
           </span>
         </div>
 
+        {filtered.length > 0 ? (
         <div className="table-scroll">
           <table>
             <thead>
@@ -206,8 +208,7 @@ export function TeamClient({ initialTeam, selfId }: { initialTeam: TeamMember[];
             </tbody>
           </table>
         </div>
-
-        {filtered.length === 0 && (
+        ) : (
           <div className="empty">
             <div className="ph-icon"><Icon name="search" size={24} /></div>
             <h3>No matching members</h3>

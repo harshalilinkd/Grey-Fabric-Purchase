@@ -93,6 +93,7 @@ const ICONS: Record<string, ReactNode> = {
     </>
   ),
   plus: <path d="M12 5v14M5 12h14" />,
+  minus: <path d="M5 12h14" />,
   pencil: (
     <>
       <path d="M12 20h9" />

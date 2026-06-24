@@ -1,39 +1,87 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Icon } from "@/components/ui/Icon";
-import { usePageSearchInput } from "@/components/experience/CommandProvider";
+import { useToast } from "@/components/ui/Toast";
+import { usePagePrimaryAction, usePageSearchInput, useRegisterCommands } from "@/components/experience/CommandProvider";
+import { ProgramCardFormModal, type AvailableLot } from "@/components/program-cards/ProgramCardFormModal";
+import { ProgramCardDetailModal } from "@/components/program-cards/ProgramCardDetailModal";
 import { fetchAllShipments } from "@/lib/shipments";
-import { fetchPurchaseOrders } from "@/lib/purchase-orders";
-import { fetchProgramCardLotNos, fetchQcCheckedLotNos } from "@/lib/dyeing-queue";
-import { fmtAmount, fmtDate, fmtNum } from "@/lib/format";
+import { fetchPoColorVariants, fetchPurchaseOrders } from "@/lib/purchase-orders";
+import { createProgramCard, fetchProgramCards } from "@/lib/program-cards";
+import { fetchActiveMasterNames } from "@/lib/masters";
+import { fetchQcCheckedLotNos } from "@/lib/dyeing-queue";
+import { optimisticList } from "@/lib/optimistic";
+import { fmtAmount, fmtDate, fmtNum, round2 } from "@/lib/format";
 import { useEscClose } from "@/lib/use-esc-close";
-import type { PurchaseOrder, Shipment } from "@/lib/types";
+import type { ProgramCard, ProgramCardFormValues, PurchaseOrder, Shipment } from "@/lib/types";
+
+const PC_KEY = ["program_cards"] as const;
+const LOTS_KEY = ["program_card_lots"] as const;
+
+function optimisticCard(v: ProgramCardFormValues, programUid: string): ProgramCard {
+  const now = new Date().toISOString();
+  const sum = v.designs.reduce((s, d) => s + (Number(d.meter) || 0), 0);
+  const total = Number(v.total_meters);
+  return {
+    id: `temp-${now}`,
+    program_uid: programUid,
+    lot_no: v.lot_no.trim() || null,
+    po_unique_id: v.po_unique_id,
+    program_date: v.program_date || null,
+    dying_house_name: v.dying_house_name.trim() || null,
+    total_meters: Number.isFinite(total) && v.total_meters.trim() !== "" ? round2(total) : sum || null,
+    created_at: now,
+  };
+}
+
+function predictNextProgramId(cards: ProgramCard[]): string {
+  let max = 0;
+  for (const c of cards) {
+    const m = /^PG-(\d+)$/.exec(c.program_uid ?? "");
+    if (m) max = Math.max(max, parseInt(m[1], 10));
+  }
+  return `PG-${max + 1}`;
+}
 
 export function DyeingQueueClient({
   initialShipments,
   initialPos,
-  initialProgramLots,
+  initialPrograms,
   initialQcLots,
 }: {
   initialShipments: Shipment[];
   initialPos: PurchaseOrder[];
-  initialProgramLots: string[];
+  initialPrograms: ProgramCard[];
   initialQcLots: string[];
 }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+
   const { data: shipments = [], isFetching } = useQuery({ queryKey: ["shipments_all"], queryFn: fetchAllShipments, initialData: initialShipments });
   const { data: pos = [] } = useQuery({ queryKey: ["purchase_orders"], queryFn: fetchPurchaseOrders, initialData: initialPos });
-  const { data: programLots = [] } = useQuery({ queryKey: ["program_card_lots"], queryFn: fetchProgramCardLotNos, initialData: initialProgramLots });
+  const { data: programs = [] } = useQuery({ queryKey: PC_KEY, queryFn: fetchProgramCards, initialData: initialPrograms });
   const { data: qcLots = [] } = useQuery({ queryKey: ["qc_lots"], queryFn: fetchQcCheckedLotNos, initialData: initialQcLots });
+  const { data: dyeingHouseNames = [] } = useQuery({ queryKey: ["masters-active", "dyeing_houses"], queryFn: () => fetchActiveMasterNames("dyeing_houses") });
 
   const [search, setSearch] = useState("");
   const [view, setView] = useState<"all" | "pending" | "created">("all");
   const [infoPo, setInfoPo] = useState<PurchaseOrder | null>(null);
+  const [detail, setDetail] = useState<ProgramCard | null>(null);
+  const [formOpen, setFormOpen] = useState(false);
 
   const searchRef = useRef<HTMLInputElement | null>(null);
   usePageSearchInput(searchRef);
+  const openForm = useCallback(() => setFormOpen(true), []);
+  usePagePrimaryAction("New program", openForm);
+  useRegisterCommands(
+    () => [{ id: "dq:search", title: "Search lots", group: "This page", icon: "search", run: () => searchRef.current?.focus() }],
+    [],
+  );
+
+  const variantsQ = useQuery({ queryKey: ["po-variants", infoPo?.id], queryFn: () => fetchPoColorVariants(infoPo!.id), enabled: !!infoPo });
 
   useEscClose(!!infoPo, () => setInfoPo(null));
 
@@ -42,8 +90,13 @@ export function DyeingQueueClient({
     for (const p of pos) m[p.unique_id] = p;
     return m;
   }, [pos]);
-  const programSet = useMemo(() => new Set(programLots), [programLots]);
   const qcSet = useMemo(() => new Set(qcLots), [qcLots]);
+  const programSet = useMemo(() => new Set(programs.map((c) => c.lot_no).filter((x): x is string => !!x)), [programs]);
+  const lotToProgram = useMemo(() => {
+    const m: Record<string, ProgramCard> = {};
+    for (const c of programs) if (c.lot_no && !m[c.lot_no]) m[c.lot_no] = c;
+    return m;
+  }, [programs]);
 
   // Every shipment is a lot entry; hide any lot already QC'd; derive status.
   const baseQueue = useMemo(() => {
@@ -51,9 +104,9 @@ export function DyeingQueueClient({
       .filter((s) => !(s.lot_no && qcSet.has(s.lot_no)))
       .map((s) => {
         const created = !!(s.lot_no && programSet.has(s.lot_no));
-        return { shipment: s, po: poByUid[s.po_unique_id] as PurchaseOrder | undefined, created };
+        return { shipment: s, po: poByUid[s.po_unique_id] as PurchaseOrder | undefined, created, program: s.lot_no ? lotToProgram[s.lot_no] : undefined };
       });
-  }, [shipments, qcSet, programSet, poByUid]);
+  }, [shipments, qcSet, programSet, poByUid, lotToProgram]);
 
   const pendingCount = baseQueue.filter((r) => !r.created).length;
   const createdCount = baseQueue.filter((r) => r.created).length;
@@ -64,17 +117,50 @@ export function DyeingQueueClient({
     if (view !== "all") list = list.filter((r) => (view === "created" ? r.created : !r.created));
     if (!q) return list;
     return list.filter((r) =>
-      [r.shipment.lot_no, r.po?.po_no, r.po?.vendor_name].some((f) => (f ?? "").toLowerCase().includes(q)),
+      [r.shipment.lot_no, r.po?.po_no, r.po?.vendor_name, r.program?.program_uid, r.program?.dying_house_name].some((f) => (f ?? "").toLowerCase().includes(q)),
     );
   }, [baseQueue, search, view]);
+
+  // Pending lots (have a shipment, no program yet, not QC'd) — offered in the New-program form.
+  const availableLots = useMemo<AvailableLot[]>(() => {
+    const seen = new Set<string>();
+    const out: AvailableLot[] = [];
+    for (const r of baseQueue) {
+      const lot = r.shipment.lot_no;
+      if (r.created || !lot || seen.has(lot)) continue;
+      seen.add(lot);
+      out.push({ lot_no: lot, po_unique_id: r.shipment.po_unique_id, po_id: r.po?.id ?? null, po_no: r.po?.po_no ?? null, vendor: r.po?.vendor_name ?? null });
+    }
+    return out;
+  }, [baseQueue]);
+
+  const nextProgramId = useMemo(() => predictNextProgramId(programs), [programs]);
+
+  const createM = useMutation({
+    mutationFn: (v: ProgramCardFormValues) => createProgramCard(v),
+    onMutate: async (v: ProgramCardFormValues) => {
+      setFormOpen(false);
+      await qc.cancelQueries({ queryKey: PC_KEY });
+      const temp = optimisticCard(v, nextProgramId);
+      return { rollback: optimisticList<ProgramCard>(qc, PC_KEY, (cur) => [temp, ...cur]) };
+    },
+    onError: (e: Error, _v, ctx) => { ctx?.rollback(); toast.error(e.message); },
+    onSuccess: () => toast.success("Program card created"),
+    onSettled: () => { qc.invalidateQueries({ queryKey: PC_KEY }); qc.invalidateQueries({ queryKey: LOTS_KEY }); },
+  });
+
+  const detailPo = detail ? poByUid[detail.po_unique_id] : undefined;
 
   return (
     <>
       <div className="page-head row">
         <div>
           <h1>Dyeing Queue</h1>
-          <p>Lots awaiting or in-progress dyeing</p>
+          <p>Lots awaiting or in dyeing — create a program to send a lot for dyeing</p>
         </div>
+        <button className="btn btn-primary" onClick={openForm} disabled={availableLots.length === 0} title={availableLots.length === 0 ? "No lots awaiting a program" : "Create a dyeing program"}>
+          <Icon name="plus" />New program
+        </button>
       </div>
 
       <div className="toolbar split">
@@ -91,7 +177,7 @@ export function DyeingQueueClient({
         </div>
         <div className="search">
           <Icon name="search" size={15} />
-          <input ref={searchRef} placeholder="Search lot no, PO no, vendor…" value={search} onChange={(e) => setSearch(e.target.value)} />
+          <input ref={searchRef} placeholder="Search lot, PO, vendor, program, dyeing house…" value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
         {isFetching && <span className="fetching">Updating…</span>}
       </div>
@@ -106,6 +192,8 @@ export function DyeingQueueClient({
                   <th>Lot No</th>
                   <th className="num">Sent Qty</th>
                   <th>PO No</th>
+                  <th>Program</th>
+                  <th>Dyeing House</th>
                   <th>Status</th>
                   <th className="col-actions">Actions</th>
                 </tr>
@@ -117,11 +205,21 @@ export function DyeingQueueClient({
                     <td><span className="strong mono">{r.shipment.lot_no ?? "—"}</span></td>
                     <td className="num mono">{fmtNum(r.shipment.sent_quantity)}</td>
                     <td><span className="mono">{r.po?.po_no ?? "—"}</span></td>
+                    <td>{r.program ? <span className="strong mono">{r.program.program_uid}</span> : <span className="dim">—</span>}</td>
+                    <td>{r.program?.dying_house_name ?? <span className="dim">—</span>}</td>
                     <td><span className={`pill ${r.created ? "success" : "warning"}`}>{r.created ? "Program Created" : "Pending Program"}</span></td>
                     <td className="col-actions">
-                      <button className="act" onClick={() => r.po && setInfoPo(r.po)} disabled={!r.po}>
-                        <Icon name="info" size={15} />Info
-                      </button>
+                      <div className="row-actions">
+                        {r.created && r.program ? (
+                          <button className="act" onClick={() => setDetail(r.program!)}>
+                            <Icon name="card" size={15} />Program
+                          </button>
+                        ) : (
+                          <button className="act" onClick={() => r.po && setInfoPo(r.po)} disabled={!r.po}>
+                            <Icon name="info" size={15} />Info
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -133,32 +231,34 @@ export function DyeingQueueClient({
             <div className="ph-icon"><Icon name="lines" size={26} /></div>
             <h3>
               {baseQueue.length
-                ? search.trim()
-                  ? "No matching lots"
-                  : view === "pending"
-                    ? "Nothing pending"
-                    : "No programs created yet"
+                ? search.trim() ? "No matching lots" : view === "pending" ? "Nothing pending" : "No programs created yet"
                 : "Queue is clear"}
             </h3>
             <p>
               {baseQueue.length
-                ? search.trim()
-                  ? "Try a different search."
-                  : view === "pending"
-                    ? "Every lot in the queue has a dyeing program."
-                    : "Create program cards and they'll show up here."
-                : shipments.length
-                  ? "Every lot has been quality-checked — nothing left in the dyeing queue."
-                  : "Log shipments on Grey House Follow Up and lots will appear here, ready for dyeing."}
+                ? search.trim() ? "Try a different search." : view === "pending" ? "Every lot in the queue has a dyeing program." : "Create a program for a pending lot and it'll show up here."
+                : shipments.length ? "Every lot has been quality-checked — nothing left in the dyeing queue." : "Log shipments on Grey House Follow Up and lots will appear here, ready for dyeing."}
             </p>
-            {!shipments.length && (
-              <Link className="btn btn-primary" href="/grey-receipts">
-                <Icon name="box" />Log a grey receipt
-              </Link>
-            )}
+            {!shipments.length ? (
+              <Link className="btn btn-primary" href="/grey-receipts"><Icon name="box" />Log a grey receipt</Link>
+            ) : availableLots.length > 0 ? (
+              <button className="btn btn-primary" onClick={openForm}><Icon name="plus" />New program</button>
+            ) : null}
           </div>
         )}
       </div>
+
+      <ProgramCardFormModal
+        open={formOpen}
+        availableLots={availableLots}
+        nextProgramId={nextProgramId}
+        saving={createM.isPending}
+        dyeingHouseSuggestions={dyeingHouseNames}
+        onClose={() => setFormOpen(false)}
+        onSave={(v) => createM.mutate(v)}
+      />
+
+      {detail && <ProgramCardDetailModal card={detail} po={detailPo} onClose={() => setDetail(null)} />}
 
       {infoPo && (
         <div className="overlay" onClick={(e) => e.target === e.currentTarget && setInfoPo(null)}>
@@ -174,12 +274,29 @@ export function DyeingQueueClient({
               <div className="sum">
                 <div className="sum-row"><span>PO No</span><b className="mono">{infoPo.po_no ?? "—"}</b></div>
                 <div className="sum-row"><span>Vendor</span><b>{infoPo.vendor_name ?? "—"}</b></div>
+                <div className="sum-row"><span>Quality name</span><b>{infoPo.quality_name ?? infoPo.quality ?? "—"}</b></div>
                 <div className="sum-row"><span>Process</span><b>{infoPo.process ?? "—"}</b></div>
                 <div className="sum-row"><span>Order date</span><b>{fmtDate(infoPo.order_date)}</b></div>
                 <div className="sum-row"><span>Total qty</span><b className="mono">{fmtNum(infoPo.quantity)} m</b></div>
                 <div className="sum-row"><span>Rate</span><b className="mono">{infoPo.rate == null ? "—" : fmtAmount(infoPo.rate)}</b></div>
                 <div className="sum-row"><span>Amount</span><b className="mono">{fmtAmount(infoPo.amount)}</b></div>
               </div>
+
+              <div className="sum-title">Colour breakdown</div>
+              {variantsQ.isLoading ? (
+                <div className="skeleton" style={{ height: 60 }} />
+              ) : (variantsQ.data?.length ?? 0) > 0 ? (
+                <table className="mini-table">
+                  <thead><tr><th>Code</th><th>Colour</th><th style={{ textAlign: "right" }}>Metres</th></tr></thead>
+                  <tbody>
+                    {variantsQ.data!.map((vv) => (
+                      <tr key={vv.id}><td className="mono">{vv.code ?? "—"}</td><td>{vv.color_name ?? "—"}</td><td className="num mono">{fmtNum(vv.meters)}</td></tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <p className="muted-note">No colour split recorded.</p>
+              )}
             </div>
           </div>
         </div>
