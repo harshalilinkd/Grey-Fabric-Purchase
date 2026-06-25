@@ -42,6 +42,15 @@ export async function fetchProgramCardDesigns(programCardId: string): Promise<Pr
   return (data ?? []) as ProgramCardDesign[];
 }
 
+/** Admin-only delete of a program card (its design rows cascade) — via the privileged route handler. */
+export async function deleteProgramCard(id: string): Promise<void> {
+  const res = await fetch(`/api/program-cards/${id}`, { method: "DELETE" });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? "Failed to delete program card");
+  }
+}
+
 /** Next "PG-{n}" number = (max existing n) + 1, read fresh at insert time. */
 async function nextProgramNumber(supabase: Supabase): Promise<number> {
   const { data, error } = await supabase.from("program_cards").select("program_uid");

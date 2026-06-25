@@ -8,12 +8,12 @@ import { useToast } from "@/components/ui/Toast";
 import { usePagePrimaryAction, usePageSearchInput, useRegisterCommands } from "@/components/experience/CommandProvider";
 import { ProgramCardFormModal, type AvailableLot } from "@/components/program-cards/ProgramCardFormModal";
 import { ProgramCardDetailModal } from "@/components/program-cards/ProgramCardDetailModal";
-import { fetchAllShipments } from "@/lib/shipments";
+import { deleteShipment, fetchAllShipments } from "@/lib/shipments";
 import { fetchPoColorVariants, fetchPurchaseOrders } from "@/lib/purchase-orders";
-import { createProgramCard, fetchProgramCards } from "@/lib/program-cards";
+import { createProgramCard, deleteProgramCard, fetchProgramCards } from "@/lib/program-cards";
 import { fetchActiveMasterNames } from "@/lib/masters";
 import { fetchQcCheckedLotNos } from "@/lib/dyeing-queue";
-import { optimisticList } from "@/lib/optimistic";
+import { optimisticList, optimisticRemove } from "@/lib/optimistic";
 import { fmtAmount, fmtDate, fmtNum, round2 } from "@/lib/format";
 import { useEscClose } from "@/lib/use-esc-close";
 import type { ProgramCard, ProgramCardFormValues, PurchaseOrder, Shipment } from "@/lib/types";
@@ -46,16 +46,20 @@ function predictNextProgramId(cards: ProgramCard[]): string {
   return `PG-${max + 1}`;
 }
 
+type QueueRow = { shipment: Shipment; po: PurchaseOrder | undefined; created: boolean; program: ProgramCard | undefined };
+
 export function DyeingQueueClient({
   initialShipments,
   initialPos,
   initialPrograms,
   initialQcLots,
+  isAdmin,
 }: {
   initialShipments: Shipment[];
   initialPos: PurchaseOrder[];
   initialPrograms: ProgramCard[];
   initialQcLots: string[];
+  isAdmin: boolean;
 }) {
   const qc = useQueryClient();
   const toast = useToast();
@@ -71,6 +75,7 @@ export function DyeingQueueClient({
   const [infoPo, setInfoPo] = useState<PurchaseOrder | null>(null);
   const [detail, setDetail] = useState<ProgramCard | null>(null);
   const [formOpen, setFormOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<QueueRow | null>(null);
 
   const searchRef = useRef<HTMLInputElement | null>(null);
   usePageSearchInput(searchRef);
@@ -84,6 +89,7 @@ export function DyeingQueueClient({
   const variantsQ = useQuery({ queryKey: ["po-variants", infoPo?.id], queryFn: () => fetchPoColorVariants(infoPo!.id), enabled: !!infoPo });
 
   useEscClose(!!infoPo, () => setInfoPo(null));
+  useEscClose(!!deleteTarget, () => setDeleteTarget(null));
 
   const poByUid = useMemo(() => {
     const m: Record<string, PurchaseOrder> = {};
@@ -147,6 +153,28 @@ export function DyeingQueueClient({
     onError: (e: Error, _v, ctx) => { ctx?.rollback(); toast.error(e.message); },
     onSuccess: () => toast.success("Program card created"),
     onSettled: () => { qc.invalidateQueries({ queryKey: PC_KEY }); qc.invalidateQueries({ queryKey: LOTS_KEY }); },
+  });
+
+  // Delete a lot: removes its shipment (so it leaves the Dyeing Queue + Grey House) and, if a
+  // program was already created, its program card too. Admin-only (the route handlers enforce it).
+  const deleteM = useMutation({
+    mutationFn: async (row: QueueRow) => {
+      if (row.created && row.program) await deleteProgramCard(row.program.id);
+      await deleteShipment(row.shipment.id);
+    },
+    onMutate: async (row: QueueRow) => {
+      setDeleteTarget(null);
+      await qc.cancelQueries({ queryKey: ["shipments_all"] });
+      const rollback = optimisticRemove<Shipment>(qc, ["shipments_all"], (s) => s.id === row.shipment.id);
+      return { rollback };
+    },
+    onError: (e: Error, _row, ctx) => { ctx?.rollback(); toast.error(e.message); },
+    onSuccess: () => toast.success("Lot deleted"),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ["shipments_all"] });
+      qc.invalidateQueries({ queryKey: PC_KEY });
+      qc.invalidateQueries({ queryKey: LOTS_KEY });
+    },
   });
 
   const detailPo = detail ? poByUid[detail.po_unique_id] : undefined;
@@ -217,6 +245,11 @@ export function DyeingQueueClient({
                         ) : (
                           <button className="act" onClick={() => r.po && setInfoPo(r.po)} disabled={!r.po}>
                             <Icon name="info" size={15} />Info
+                          </button>
+                        )}
+                        {isAdmin && (
+                          <button className="act danger" title="Delete this lot" aria-label={`Delete lot ${r.shipment.lot_no ?? ""}`} onClick={() => setDeleteTarget(r)}>
+                            <Icon name="trash" size={15} />
                           </button>
                         )}
                       </div>
@@ -297,6 +330,37 @@ export function DyeingQueueClient({
               ) : (
                 <p className="muted-note">No colour split recorded.</p>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {deleteTarget && (
+        <div className="overlay" onClick={(e) => e.target === e.currentTarget && setDeleteTarget(null)}>
+          <div className="modal sm" role="dialog" aria-modal="true" aria-label="Delete lot?">
+            <div className="modal-head">
+              <div>
+                <h3>Delete this lot?</h3>
+                <p>Lot <span className="mono">{deleteTarget.shipment.lot_no ?? "—"}</span>{deleteTarget.po?.po_no ? ` · PO ${deleteTarget.po.po_no}` : ""}</p>
+              </div>
+              <button className="close-x" onClick={() => setDeleteTarget(null)} aria-label="Close"><Icon name="x" /></button>
+            </div>
+            <div className="modal-body">
+              <p className="confirm-text">
+                This removes the lot&apos;s shipment, so it disappears from the <b>Dyeing Queue</b> and <b>Grey House Follow Up</b>
+                {deleteTarget.created && deleteTarget.program ? <> and deletes its program <b className="mono">{deleteTarget.program.program_uid}</b></> : null}.
+                <br />
+                <span className="confirm-warn">This can&apos;t be undone.</span>
+              </p>
+            </div>
+            <div className="modal-foot">
+              <span className="amt-preview" />
+              <div className="foot-actions">
+                <button className="btn btn-ghost" onClick={() => setDeleteTarget(null)}>Cancel</button>
+                <button className="btn btn-danger" onClick={() => deleteM.mutate(deleteTarget)} disabled={deleteM.isPending}>
+                  {deleteM.isPending ? "Deleting…" : "Delete lot"}
+                </button>
+              </div>
             </div>
           </div>
         </div>

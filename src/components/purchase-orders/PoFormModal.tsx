@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import { Fragment, useEffect, useRef, useState, type ChangeEvent } from "react";
 import { Icon } from "@/components/ui/Icon";
-import { CHECKS_METHODS, DIRECT_SUBTYPES, SOURCING_PATHS, type SourcingPath } from "@/lib/po-meta";
+import { CHECKS_METHODS, DIRECT_SUBTYPES, SAMPLE_TOGGLE_LABEL, SAMPLE_TOGGLE_PATHS, SOURCING_PATHS, sourcingFlow, type SourcingPath } from "@/lib/po-meta";
 import { fmtAmount, round2 } from "@/lib/format";
 import { useEscClose } from "@/lib/use-esc-close";
 import type { PoFormValues, PurchaseOrder } from "@/lib/types";
@@ -163,7 +163,18 @@ export function PoFormModal({
               ))}
             </div>
             {v.sourcing_path && (
-              <p className="path-blurb">{SOURCING_PATHS.find((p) => p.value === v.sourcing_path)?.blurb}</p>
+              <>
+                <p className="path-blurb">{SOURCING_PATHS.find((p) => p.value === v.sourcing_path)?.blurb}</p>
+                <div className="path-flow" role="group" aria-label="The flow this source follows">
+                  <span className="path-flow-label">Flow</span>
+                  {sourcingFlow(v.sourcing_path, { checks_method: v.checks_method, direct_subtype: v.direct_subtype }).map((step, i) => (
+                    <Fragment key={step}>
+                      {i > 0 && <span className="path-flow-arrow" aria-hidden="true">→</span>}
+                      <span className={`path-flow-step${step === "QC" ? " qc" : step === "PO" ? " po" : ""}`}>{step}</span>
+                    </Fragment>
+                  ))}
+                </div>
+              </>
             )}
 
             {/* CHECKS & WEAVES — R&D route: CAD → direct order, or Handloom sample → weaving & design → order */}
@@ -227,6 +238,32 @@ export function PoFormModal({
               </>
             )}
 
+            {/* SAMPLING & APPROVAL — capture the pre-PO sample sign-off (grey / client / checks) */}
+            {(SAMPLE_TOGGLE_PATHS as string[]).includes(v.sourcing_path) && (
+              <>
+                <div className="sum-title">Sampling &amp; approval</div>
+                <div className="field">
+                  <label>{SAMPLE_TOGGLE_LABEL[v.sourcing_path]}</label>
+                  <div className="path-pills" role="group" aria-label="Sample approval status">
+                    {[
+                      { value: "approved", label: "Approved" },
+                      { value: "pending", label: "Pending" },
+                    ].map((o) => (
+                      <button
+                        key={o.value}
+                        type="button"
+                        className={`path-pill${v.sampling_status === o.value ? " on" : ""}`}
+                        aria-pressed={v.sampling_status === o.value}
+                        onClick={() => setV((p) => ({ ...p, sampling_status: o.value }))}
+                      >
+                        {o.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
+
             {/* SHARED CORE */}
             <div className="sum-title">Order details</div>
             <div className="field-row-3">
@@ -238,6 +275,11 @@ export function PoFormModal({
               </div>
               <div className="field"><label htmlFor="po-process">Process</label><input id="po-process" list="po-processes" value={v.process} onChange={set("process")} placeholder="e.g. GT Dyeing" /><datalist id="po-processes">{processSuggestions.map((s) => <option key={s} value={s} />)}</datalist></div>
               <div className="field"><label htmlFor="po-quality">Quality</label><input id="po-quality" list="po-qualities" value={v.quality} onChange={set("quality")} placeholder="Cordray Print" /><datalist id="po-qualities">{qualitySuggestions.map((qn) => <option key={qn} value={qn} />)}</datalist></div>
+            </div>
+            <div className="field-row-3">
+              <div className="field"><label htmlFor="po-qname">Quality name (internal)</label><input id="po-qname" list="po-qnames" value={v.quality_name} onChange={set("quality_name")} placeholder="e.g. Innova" /><datalist id="po-qnames">{qualitySuggestions.map((qn) => <option key={qn} value={qn} />)}</datalist></div>
+              <div className="field"><label htmlFor="po-merchant">Selling merchant no</label><input id="po-merchant" value={v.selling_merchant_no} onChange={set("selling_merchant_no")} placeholder="e.g. SM-204" /></div>
+              <div className="field"><label htmlFor="po-vdesign">Vendor design no</label><input id="po-vdesign" value={v.vendor_design_no} onChange={set("vendor_design_no")} placeholder="e.g. D-8988" /></div>
             </div>
             <div className="field-row-3">
               <div className="field"><label htmlFor="po-date">Order date</label><input id="po-date" type="date" value={v.order_date} onChange={set("order_date")} /></div>
