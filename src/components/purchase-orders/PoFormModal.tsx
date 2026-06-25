@@ -2,7 +2,7 @@
 
 import { Fragment, useEffect, useRef, useState, type ChangeEvent } from "react";
 import { Icon } from "@/components/ui/Icon";
-import { CHECKS_METHODS, DIRECT_SUBTYPES, SAMPLE_TOGGLE_LABEL, SAMPLE_TOGGLE_PATHS, SOURCING_PATHS, sourcingFlow, type SourcingPath } from "@/lib/po-meta";
+import { CHECKS_METHODS, DIRECT_SUBTYPES, SOURCING_PATHS, sourcingFlow, type SourcingPath } from "@/lib/po-meta";
 import { fmtAmount, round2 } from "@/lib/format";
 import { useEscClose } from "@/lib/use-esc-close";
 import type { PoFormValues, PurchaseOrder } from "@/lib/types";
@@ -71,6 +71,7 @@ export function PoFormModal({
   qualitySuggestions,
   vendorSuggestions = [],
   processSuggestions = [],
+  prefill = null,
 }: {
   open: boolean;
   editing: PurchaseOrder | null;
@@ -80,6 +81,8 @@ export function PoFormModal({
   qualitySuggestions: string[];
   vendorSuggestions?: string[];
   processSuggestions?: string[];
+  /** Seed a NEW PO with partial values (e.g. raising a PO from an approved sample). Ignored when editing. */
+  prefill?: Partial<PoFormValues> | null;
 }) {
   const [v, setV] = useState<PoFormValues>(EMPTY);
   const [submitted, setSubmitted] = useState(false);
@@ -87,12 +90,12 @@ export function PoFormModal({
 
   useEffect(() => {
     if (open) {
-      setV(editing ? fromPo(editing) : EMPTY);
+      setV(editing ? fromPo(editing) : { ...EMPTY, ...(prefill ?? {}) });
       setSubmitted(false);
       const id = requestAnimationFrame(() => firstFieldRef.current?.focus());
       return () => cancelAnimationFrame(id);
     }
-  }, [open, editing]);
+  }, [open, editing, prefill]);
 
   useEscClose(open, onClose);
 
@@ -116,9 +119,10 @@ export function PoFormModal({
   const r = num(v.rate);
   const amount = q != null && r != null ? round2(q * r) : null;
 
-  // Required: the three essentials (vendor + quantity + rate). Everything else optional.
+  // Required: vendor + internal Quality Name (the forcing function the Warehouse relies on) + quantity + rate.
   const missing = {
     vendor_name: !v.vendor_name.trim(),
+    quality_name: !v.quality_name.trim(),
     quantity: q == null,
     rate: r == null,
   };
@@ -238,32 +242,6 @@ export function PoFormModal({
               </>
             )}
 
-            {/* SAMPLING & APPROVAL — capture the pre-PO sample sign-off (grey / client / checks) */}
-            {(SAMPLE_TOGGLE_PATHS as string[]).includes(v.sourcing_path) && (
-              <>
-                <div className="sum-title">Sampling &amp; approval</div>
-                <div className="field">
-                  <label>{SAMPLE_TOGGLE_LABEL[v.sourcing_path]}</label>
-                  <div className="path-pills" role="group" aria-label="Sample approval status">
-                    {[
-                      { value: "approved", label: "Approved" },
-                      { value: "pending", label: "Pending" },
-                    ].map((o) => (
-                      <button
-                        key={o.value}
-                        type="button"
-                        className={`path-pill${v.sampling_status === o.value ? " on" : ""}`}
-                        aria-pressed={v.sampling_status === o.value}
-                        onClick={() => setV((p) => ({ ...p, sampling_status: o.value }))}
-                      >
-                        {o.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </>
-            )}
-
             {/* SHARED CORE */}
             <div className="sum-title">Order details</div>
             <div className="field-row-3">
@@ -277,7 +255,12 @@ export function PoFormModal({
               <div className="field"><label htmlFor="po-quality">Quality</label><input id="po-quality" list="po-qualities" value={v.quality} onChange={set("quality")} placeholder="Cordray Print" /><datalist id="po-qualities">{qualitySuggestions.map((qn) => <option key={qn} value={qn} />)}</datalist></div>
             </div>
             <div className="field-row-3">
-              <div className="field"><label htmlFor="po-qname">Quality name (internal)</label><input id="po-qname" list="po-qnames" value={v.quality_name} onChange={set("quality_name")} placeholder="e.g. Innova" /><datalist id="po-qnames">{qualitySuggestions.map((qn) => <option key={qn} value={qn} />)}</datalist></div>
+              <div className="field">
+                <label htmlFor="po-qname">Quality name (internal) *</label>
+                <input id="po-qname" list="po-qnames" value={v.quality_name} onChange={set("quality_name")} placeholder="e.g. Innova" aria-invalid={reqErr("quality_name") || undefined} />
+                <datalist id="po-qnames">{qualitySuggestions.map((qn) => <option key={qn} value={qn} />)}</datalist>
+                {reqErr("quality_name") && <span className="field-err">Required — name the fabric at PO time.</span>}
+              </div>
               <div className="field"><label htmlFor="po-merchant">Selling merchant no</label><input id="po-merchant" value={v.selling_merchant_no} onChange={set("selling_merchant_no")} placeholder="e.g. SM-204" /></div>
               <div className="field"><label htmlFor="po-vdesign">Vendor design no</label><input id="po-vdesign" value={v.vendor_design_no} onChange={set("vendor_design_no")} placeholder="e.g. D-8988" /></div>
             </div>

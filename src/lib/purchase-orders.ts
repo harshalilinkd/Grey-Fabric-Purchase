@@ -96,12 +96,17 @@ export async function fetchPurchaseOrders(): Promise<PurchaseOrder[]> {
   return (data ?? []) as PurchaseOrder[];
 }
 
-export async function createPurchaseOrder(values: PoFormValues): Promise<void> {
+export async function createPurchaseOrder(values: PoFormValues): Promise<PurchaseOrder> {
   const supabase = createClient();
   const unique_id = `UID-${Date.now()}`;
   // Colours are split later (Program Card stage) — PO save no longer writes variants.
-  const { error } = await supabase.from("purchase_orders").insert({ unique_id, ...toPayload(values) });
+  const { data, error } = await supabase
+    .from("purchase_orders")
+    .insert({ unique_id, ...toPayload(values) })
+    .select(PO_COLUMNS)
+    .single();
   if (error) throw new Error(error.message);
+  return data as PurchaseOrder;
 }
 
 export async function updatePurchaseOrder(id: string, values: PoFormValues): Promise<void> {

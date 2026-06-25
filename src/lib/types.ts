@@ -190,6 +190,44 @@ export type FinalReceiptFormValues = {
   received_date: string;
 };
 
+export type SampleApprovalStatus = "Pending" | "Approved" | "Rejected";
+
+/** A pre-PO sample/approval record (sample_approvals) — the R&D step before a PO is raised.
+ *  Applies only to the sampled sources (grey / client_fabric / checks_weaves). */
+export type SampleApproval = {
+  id: string;
+  approval_id: string;
+  sourcing_path: string | null;
+  checks_method: string | null;
+  vendor_name: string | null;
+  quality_name: string | null;
+  vendor_design_no: string | null;
+  selling_merchant_no: string | null;
+  cad_ref: string | null;
+  handloom_ref: string | null;
+  sample_date: string | null;
+  remark: string | null;
+  status: SampleApprovalStatus;
+  approved_date: string | null;
+  /** Set once a PO is raised from this approved sample. */
+  po_unique_id: string | null;
+  created_at?: string;
+};
+
+/** Fields captured by the New-Sample form (approval id auto-assigned). */
+export type SampleApprovalFormValues = {
+  sourcing_path: string;
+  checks_method: string;
+  vendor_name: string;
+  quality_name: string;
+  vendor_design_no: string;
+  selling_merchant_no: string;
+  cad_ref: string;
+  handloom_ref: string;
+  sample_date: string;
+  remark: string;
+};
+
 /** A dyeing-house follow-up log entry (dyeing_followups). */
 export type DyeingFollowup = {
   id: string;
