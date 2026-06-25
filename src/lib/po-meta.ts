@@ -18,9 +18,8 @@ export const SOURCING_LABEL: Record<string, string> = Object.fromEntries(
 );
 
 /**
- * The end-to-end flow a source follows: sampling/approval (differs per source AND sub-option)
- * → PO → production. Transcribed from LD Silk Mills' purchase flow charts.
- *   • Checks & weaves splits by route: CAD vs Handloom sample (`checks_method`).
+ * The flow a source follows, starting at PO generation (the sampling/approval R&D step is
+ * out of scope — the system starts at the PO). Transcribed from LD Silk Mills' flow charts.
  *   • Direct purchase splits by cloth: new cloth vs old/Milano (`direct_subtype`).
  *   • Grey / client-fabric / checks-weaves run the dye pipeline after the PO; direct / imported
  *     are finished goods → received & QC'd straight to the Warehouse (no dyeing).
@@ -28,27 +27,23 @@ export const SOURCING_LABEL: Record<string, string> = Object.fromEntries(
  */
 export function sourcingFlow(
   path: string,
-  opts?: { checks_method?: string | null; direct_subtype?: string | null },
+  opts?: { direct_subtype?: string | null },
 ): string[] {
   switch (path) {
     case "grey":
-      return ["Grey fabric", "Sample (dye + print)", "Approval", "PO", "Dyeing", "QC", "Warehouse"];
+      return ["Grey fabric", "PO", "Dyeing", "QC", "Warehouse"];
     case "client_fabric":
-      return ["Client fabric", "Finish sample", "Approval", "PO", "Dyeing", "QC", "Warehouse"];
+      return ["Client fabric", "PO", "Dyeing", "QC", "Warehouse"];
     case "checks_weaves":
-      if (opts?.checks_method === "cad")
-        return ["CAD sample", "Approve design", "Handloom sample", "Weave & design check", "Approval", "PO", "Dyeing", "QC", "Warehouse"];
-      if (opts?.checks_method === "handloom")
-        return ["Handloom sample", "Weave & design check", "Approval", "PO", "Dyeing", "QC", "Warehouse"];
-      return ["Sample & approval", "PO", "Dyeing", "QC", "Warehouse"]; // route not picked yet
+      return ["Checks & weaves", "PO", "Dyeing", "QC", "Warehouse"];
     case "direct_purchase":
       if (opts?.direct_subtype === "new_cloth")
-        return ["New cloth", "Ready goods", "PO", "Receive", "QC", "Warehouse"];
+        return ["New cloth (ready goods)", "PO", "Receive", "QC", "Warehouse"];
       if (opts?.direct_subtype === "old_milano")
         return ["Old (Milano) cloth", "PO", "Receive", "QC", "Warehouse"];
       return ["Finished cloth", "PO", "Receive", "QC", "Warehouse"]; // subtype not picked yet
     case "imported":
-      return ["Imported (China)", "No sampling", "PO", "Receive", "QC", "Warehouse"];
+      return ["Imported (China)", "PO", "Receive", "QC", "Warehouse"];
     default:
       return [];
   }
@@ -65,21 +60,6 @@ export const FINISHED_GOODS_PATHS: SourcingPath[] = ["direct_purchase", "importe
 
 export const isFinishedGoodsPo = (po: { sourcing_path?: string | null }): boolean =>
   !!po.sourcing_path && (FINISHED_GOODS_PATHS as string[]).includes(po.sourcing_path);
-
-/** Paths that record a sample-approval toggle (vs. auto "not_required"). */
-export const SAMPLE_TOGGLE_PATHS: SourcingPath[] = ["grey", "client_fabric", "checks_weaves"];
-
-export const SAMPLE_TOGGLE_LABEL: Record<string, string> = {
-  grey: "Final print approved?",
-  client_fabric: "Client finish sample approved?",
-  checks_weaves: "Weave & design approved?",
-};
-
-export const SAMPLING_LABEL: Record<string, string> = {
-  approved: "Approved",
-  pending: "Pending",
-  not_required: "Not required",
-};
 
 export const DIRECT_SUBTYPE_LABEL: Record<string, string> = {
   new_cloth: "New cloth",

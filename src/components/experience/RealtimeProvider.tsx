@@ -26,7 +26,6 @@ const TABLE_KEYS: Record<string, readonly unknown[][]> = {
   final_receipts: [["final_receipts"]],
   dyeing_followups: [["dyeing_followups"]],
   fabric_receipts: [["fabric_receipts"]],
-  sample_approvals: [["sample_approvals"]],
   profiles: [["team"]],
 };
 

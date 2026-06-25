@@ -25,7 +25,6 @@ export const NAV: NavGroup[] = [
   {
     heading: "Procurement",
     items: [
-      { label: "Sampling & Approval", path: "/sampling-approval", icon: "checkCircle", blurb: "Pre-PO sample submissions and their approval — raise a PO once approved" },
       { label: "Purchase Orders", path: "/purchase-orders", icon: "file", blurb: "Grey fabric purchase orders from vendors" },
       { label: "Grey House Follow Up", path: "/grey-receipts", icon: "box", blurb: "Sent vs pending grey fabric per PO — log shipments to create lots" },
     ],

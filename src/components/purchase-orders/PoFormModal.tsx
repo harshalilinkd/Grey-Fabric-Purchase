@@ -71,7 +71,6 @@ export function PoFormModal({
   qualitySuggestions,
   vendorSuggestions = [],
   processSuggestions = [],
-  prefill = null,
 }: {
   open: boolean;
   editing: PurchaseOrder | null;
@@ -81,8 +80,6 @@ export function PoFormModal({
   qualitySuggestions: string[];
   vendorSuggestions?: string[];
   processSuggestions?: string[];
-  /** Seed a NEW PO with partial values (e.g. raising a PO from an approved sample). Ignored when editing. */
-  prefill?: Partial<PoFormValues> | null;
 }) {
   const [v, setV] = useState<PoFormValues>(EMPTY);
   const [submitted, setSubmitted] = useState(false);
@@ -90,12 +87,12 @@ export function PoFormModal({
 
   useEffect(() => {
     if (open) {
-      setV(editing ? fromPo(editing) : { ...EMPTY, ...(prefill ?? {}) });
+      setV(editing ? fromPo(editing) : EMPTY);
       setSubmitted(false);
       const id = requestAnimationFrame(() => firstFieldRef.current?.focus());
       return () => cancelAnimationFrame(id);
     }
-  }, [open, editing, prefill]);
+  }, [open, editing]);
 
   useEscClose(open, onClose);
 
@@ -171,7 +168,7 @@ export function PoFormModal({
                 <p className="path-blurb">{SOURCING_PATHS.find((p) => p.value === v.sourcing_path)?.blurb}</p>
                 <div className="path-flow" role="group" aria-label="The flow this source follows">
                   <span className="path-flow-label">Flow</span>
-                  {sourcingFlow(v.sourcing_path, { checks_method: v.checks_method, direct_subtype: v.direct_subtype }).map((step, i) => (
+                  {sourcingFlow(v.sourcing_path, { direct_subtype: v.direct_subtype }).map((step, i) => (
                     <Fragment key={step}>
                       {i > 0 && <span className="path-flow-arrow" aria-hidden="true">→</span>}
                       <span className={`path-flow-step${step === "QC" ? " qc" : step === "PO" ? " po" : ""}`}>{step}</span>
