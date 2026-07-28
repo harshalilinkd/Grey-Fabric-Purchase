@@ -35,6 +35,9 @@ type DesignRow = ProgramCardDesignInput & { _key: number; poMeters?: number | nu
 const todayISO = () => new Date().toISOString().slice(0, 10);
 let rowSeq = 0;
 const emptyDesign = (): DesignRow => ({ _key: (rowSeq += 1), design_no: "", color: "", meter: "", file: null });
+
+/** The keyboard-navigable cells of a design row (the file input is excluded on purpose). */
+type PcCell = "dno" | "dcol" | "dm";
 const isWhite = (c: string) => c.trim().toLowerCase() === "white";
 const hasContent = (d: ProgramCardDesignInput) =>
   d.design_no.trim() !== "" || d.color.trim() !== "" || d.meter.trim() !== "" || !!d.file;
@@ -169,6 +172,16 @@ export function ProgramCardFormModal({
   const holidaySet = useMemo(() => new Set(holidays), [holidays]);
   const plannedReturn = workingDaysLabel(programDate, Number(deliveryDays) || null, holidaySet);
 
+  /* Spreadsheet keyboard nav — see `use-grid-nav.ts`. The ids here must stay in step with
+     the inputs' own ids. The cutting file input is deliberately left out: Enter on a file
+     picker should open it, not jump rows.
+
+     ⚠️ MUST stay above the `if (!open)` early return — useGridNav calls useRef/useEffect, and
+     a hook after a conditional return changes the hook order between renders. */
+  const addRow = () => setDesigns((rows) => [...rows, emptyDesign()]);
+  const cellId = (field: PcCell, row: number) => `pc-${field}-${row}`;
+  const { onCellKeyDown } = useGridNav<PcCell>({ cellId, rowCount: designs.length, onAppendRow: addRow });
+
   if (!open) return null;
 
   const setDesignNo = (i: number) => (e: ChangeEvent<HTMLInputElement>) =>
@@ -179,15 +192,7 @@ export function ProgramCardFormModal({
     setDesigns((rows) => rows.map((r, idx) => (idx === i ? { ...r, meter: e.target.value } : r)));
   const setFile = (i: number) => (e: ChangeEvent<HTMLInputElement>) =>
     setDesigns((rows) => rows.map((r, idx) => (idx === i ? { ...r, file: e.target.files?.[0] ?? null } : r)));
-  const addRow = () => setDesigns((rows) => [...rows, emptyDesign()]);
   const removeRow = (i: number) => setDesigns((rows) => (rows.length > 1 ? rows.filter((_, idx) => idx !== i) : rows));
-
-  /* Spreadsheet keyboard nav — see `use-grid-nav.ts`. The ids below must stay in step with
-     the inputs' own ids. The cutting file input is deliberately left out: Enter on a file
-     picker should open it, not jump rows. */
-  type PcCell = "dno" | "dcol" | "dm";
-  const cellId = (field: PcCell, row: number) => `pc-${field}-${row}`;
-  const { onCellKeyDown } = useGridNav<PcCell>({ cellId, rowCount: designs.length, onAppendRow: addRow });
 
   const total = Number(totalMeters);
   const totalValid = totalMeters.trim() !== "" && Number.isFinite(total) && total > 0;
