@@ -55,6 +55,18 @@ export function ProgramCardDetailModal({
               <span>Planned dyeing return</span>
               <b className="mono">{workingDaysLabel(card.program_date, card.delivery_days ?? null, holidaySet)}</b>
             </div>
+            {/* The photo/scan of the physical card that went to the dyer — the record of
+                what was actually instructed, swatches and handwritten metres included. */}
+            <div className="sum-row">
+              <span>Scanned card</span>
+              {card.pdf_url ? (
+                <a className="cutting-link" href={card.pdf_url} target="_blank" rel="noopener noreferrer">
+                  <Icon name="file" size={14} />View card
+                </a>
+              ) : (
+                <b className="dim">Not attached</b>
+              )}
+            </div>
           </div>
 
           <div className="sum-title">Colour cuttings</div>

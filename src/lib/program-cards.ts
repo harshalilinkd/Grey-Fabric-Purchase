@@ -99,6 +99,25 @@ export async function createProgramCard(values: ProgramCardFormValues): Promise<
       prepared.push({ design_no: d.design_no.trim() || d.code, color: d.color.trim() || null, meter: numOrNull(d.meter), cutting_url });
     }
 
+    /* 1b) the scan of the finished physical card — swatches pinned, metres written beside
+       them. THIS is what `pdf_url` holds. It previously held "a representative cutting"
+       (whichever colour close-up happened to be first), so anything reading that column as
+       the card was reading an arbitrary swatch. */
+    let cardUrl: string | null = null;
+    if (values.cardFile) {
+      const path = `card-${Date.now()}-${Math.round(Math.random() * 1e9)}-${sanitize(values.cardFile.name)}`;
+      const { error: cardErr } = await supabase.storage
+        .from(CUTTING_BUCKET)
+        .upload(path, values.cardFile, { contentType: values.cardFile.type || "application/octet-stream", upsert: false });
+      if (cardErr) {
+        throw new Error(
+          `Couldn't upload the scanned card (${cardErr.message}). Make sure the "${CUTTING_BUCKET}" bucket exists (migration 005).`,
+        );
+      }
+      uploadedPaths.push(path);
+      cardUrl = supabase.storage.from(CUTTING_BUCKET).getPublicUrl(path).data.publicUrl;
+    }
+
     const base = {
       lot_no: values.lot_no.trim() || null,
       po_unique_id: values.po_unique_id,
@@ -109,7 +128,7 @@ export async function createProgramCard(values: ProgramCardFormValues): Promise<
       delivery_days: numOrNull(values.delivery_days),
       color_cutting_attached: values.color_cutting_attached ?? false, // user-set Yes/No
       total_color_cutting: prepared.length || null,
-      pdf_url: prepared.find((p) => p.cutting_url)?.cutting_url ?? null, // a representative cutting
+      pdf_url: cardUrl, // the scanned CARD — never a swatch
     };
 
     // 2) insert the card, retrying the PG number on a unique collision

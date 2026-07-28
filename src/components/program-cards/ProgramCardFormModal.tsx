@@ -51,6 +51,7 @@ export function ProgramCardFormModal({
   onSave,
   dyeingHouseSuggestions = [],
   holidays = [],
+  presetLot,
 }: {
   open: boolean;
   availableLots: AvailableLot[];
@@ -61,6 +62,9 @@ export function ProgramCardFormModal({
   dyeingHouseSuggestions?: string[];
   /** Holiday dates (YYYY-MM-DD) — skipped when counting the dyeing lead time. */
   holidays?: string[];
+  /** Lot to open on, when the form was launched from that row in the Dyeing Queue.
+   *  Undefined for the generic "New program" action, which starts on the picker. */
+  presetLot?: string;
 }) {
   const [vendor, setVendor] = useState("");
   const [lotNo, setLotNo] = useState("");
@@ -70,19 +74,29 @@ export function ProgramCardFormModal({
   const [deliveryDays, setDeliveryDays] = useState("");
   const [cuttingAttached, setCuttingAttached] = useState("No");
   const [designs, setDesigns] = useState<DesignRow[]>([emptyDesign()]);
+  /** Photo/scan of the finished physical card — the archive that goes to `pdf_url`. */
+  const [cardFile, setCardFile] = useState<File | null>(null);
 
   useEffect(() => {
     if (open) {
-      setVendor("");
-      setLotNo("");
+      /* Launched from a queue row: open on that lot (and its vendor, so the narrowed Lot
+         list still contains it). The seeding effect below then fires exactly as it would
+         have if the operator had picked the lot by hand. */
+      const preset = presetLot ? availableLots.find((l) => l.lot_no === presetLot) : undefined;
+      setVendor(preset?.vendor ?? "");
+      setLotNo(preset?.lot_no ?? "");
       setDyeing("");
       setProgramDate(todayISO());
       setTotalMeters("");
       setDeliveryDays("");
       setCuttingAttached("No");
       setDesigns([emptyDesign()]);
+      setCardFile(null);
     }
-  }, [open]);
+    // Intentionally keyed on `open` alone: this is the open-time reset. Re-running it when
+    // `availableLots` refetches would wipe a half-filled form under the operator.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, presetLot]);
 
   useEscClose(open, onClose);
 
@@ -202,7 +216,12 @@ export function ProgramCardFormModal({
   /* Gate rules — the card cannot be created unless all of these hold:
      · design-line metres sum EXACTLY to the card total
      · every design line names a colour
-     · every non-White colour carries a cutting (White needs none) */
+
+     Per-colour cuttings are OPTIONAL. The physical archive is the photo of the finished
+     card (swatches pinned, metres written beside them), which is the `Scanned card` field
+     below — demanding a separate upload per colour meant 7-8 file pickers on a wide lot
+     before the operator could save anything. Cuttings stay available for anyone who wants
+     the close-ups; `missingCutting` is surfaced as a note, never a blocker. */
   const missingColor = filled.filter((d) => d.color.trim() === "").length;
   const missingCutting = filled.filter((d) => d.color.trim() !== "" && !isWhite(d.color) && !d.file).length;
   const blockers: string[] = [];
@@ -213,8 +232,6 @@ export function ProgramCardFormModal({
   if (totalValid && filledCount > 0 && !balanced)
     blockers.push(`Design metres must total exactly ${fmtNum(total)} m — currently ${fmtNum(cuttingTotal)} m.`);
   if (missingColor > 0) blockers.push(`${missingColor} design line${missingColor === 1 ? "" : "s"} without a colour.`);
-  if (missingCutting > 0)
-    blockers.push(`${missingCutting} non-White colour${missingCutting === 1 ? "" : "s"} without a cutting.`);
   const canSubmit = blockers.length === 0;
 
   const submit = () => {
@@ -228,6 +245,7 @@ export function ProgramCardFormModal({
       color: derivedColor,
       delivery_days: deliveryDays,
       color_cutting_attached: cuttingAttached === "Yes",
+      cardFile,
       designs: designs.map((d) => ({ design_no: d.design_no, color: d.color, meter: d.meter, file: d.file })),
     });
   };
@@ -316,6 +334,35 @@ export function ProgramCardFormModal({
                 <input id="pc-delivery" type="number" value={deliveryDays} onChange={(e) => setDeliveryDays(e.target.value)} placeholder="e.g., 7" />
                 <span className="field-hint">Planned dyeing return: <b className="mono">{plannedReturn}</b> (working days)</span>
               </div>
+            </div>
+
+            {/* The digital archive of the physical card: swatches pinned down the left
+                margin with the metres handwritten beside each. One photo of the finished
+                card — this is what `program_cards.pdf_url` is for. */}
+            <div className="field-row-2">
+              <div className="field">
+                <label htmlFor="pc-card-scan">Scanned card</label>
+                <input
+                  id="pc-card-scan"
+                  type="file"
+                  accept="image/*,application/pdf"
+                  onChange={(e) => setCardFile(e.target.files?.[0] ?? null)}
+                />
+                <span className="field-hint">
+                  {cardFile
+                    ? `Attached — ${cardFile.name}`
+                    : "Photo or scan of the finished card. Optional, but it is the record of what the dyer was actually sent."}
+                </span>
+              </div>
+              {missingCutting > 0 && (
+                <div className="field">
+                  <label>Colour cuttings</label>
+                  <p className="muted-note" style={{ margin: 0 }}>
+                    {missingCutting} non-White colour{missingCutting === 1 ? "" : "s"} without a close-up cutting.
+                    Optional — the scanned card above is the archive.
+                  </p>
+                </div>
+              )}
             </div>
 
             {/* Design Details */}

@@ -78,11 +78,14 @@ export function DyeingQueueClient({
   const [infoPo, setInfoPo] = useState<PurchaseOrder | null>(null);
   const [detail, setDetail] = useState<ProgramCard | null>(null);
   const [formOpen, setFormOpen] = useState(false);
+  /** Set when the form is launched from a specific queue row; undefined from "New program". */
+  const [presetLot, setPresetLot] = useState<string | undefined>(undefined);
   const [deleteTarget, setDeleteTarget] = useState<QueueRow | null>(null);
 
   const searchRef = useRef<HTMLInputElement | null>(null);
   usePageSearchInput(searchRef);
-  const openForm = useCallback(() => setFormOpen(true), []);
+  // The generic action starts on the picker — clear any lot a previous row-launch set.
+  const openForm = useCallback(() => { setPresetLot(undefined); setFormOpen(true); }, []);
   usePagePrimaryAction("New program", openForm);
   useRegisterCommands(
     () => [{ id: "dq:search", title: "Search lots", group: "This page", icon: "search", run: () => searchRef.current?.focus() }],
@@ -263,9 +266,20 @@ export function DyeingQueueClient({
                             <Icon name="card" size={15} />Program
                           </button>
                         ) : (
-                          <button className="act" onClick={() => r.po && setInfoPo(r.po)} disabled={!r.po}>
-                            <Icon name="info" size={15} />Info
-                          </button>
+                          <>
+                            {/* Start the card for THIS lot — the operator is already looking
+                                at the row, so re-finding it in the modal's picker is busywork. */}
+                            <button
+                              className="act"
+                              onClick={() => { setPresetLot(r.shipment.lot_no ?? undefined); setFormOpen(true); }}
+                              disabled={!r.shipment.lot_no}
+                            >
+                              <Icon name="plus" size={15} />Create program
+                            </button>
+                            <button className="act" onClick={() => r.po && setInfoPo(r.po)} disabled={!r.po}>
+                              <Icon name="info" size={15} />Info
+                            </button>
+                          </>
                         )}
                         {isAdmin && (
                           <button className="act danger" title="Delete this lot" aria-label={`Delete lot ${r.shipment.lot_no ?? ""}`} onClick={() => setDeleteTarget(r)}>
@@ -308,6 +322,7 @@ export function DyeingQueueClient({
         saving={createM.isPending}
         dyeingHouseSuggestions={dyeingHouseNames}
         holidays={holidays}
+        presetLot={presetLot}
         onClose={() => setFormOpen(false)}
         onSave={(v) => createM.mutate(v)}
       />

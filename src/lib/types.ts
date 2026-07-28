@@ -191,6 +191,10 @@ export type ProgramCardFormValues = {
   delivery_days: string;
   /** User-set Yes/No flag (optional; defaults false in the data layer). */
   color_cutting_attached?: boolean;
+  /** Photo/scan of the finished physical card → `program_cards.pdf_url`. Optional.
+   *  This is the card ITSELF (swatches pinned, metres written beside them) — not to be
+   *  confused with the per-colour close-ups in `designs[].file`. */
+  cardFile?: File | null;
   designs: ProgramCardDesignInput[];
 };
 
