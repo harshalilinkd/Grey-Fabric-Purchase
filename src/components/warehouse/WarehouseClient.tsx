@@ -11,10 +11,11 @@ import { fetchPurchaseOrders } from "@/lib/purchase-orders";
 import { fetchProgramCards } from "@/lib/program-cards";
 import { fetchReissueReturns } from "@/lib/reissue-return";
 import { fmtNum } from "@/lib/format";
+import { WH_FINAL, WH_WAITING, isFinalQty, lotStatus, type WarehouseStatus } from "@/lib/warehouse-status";
 import { useEscClose } from "@/lib/use-esc-close";
 import type { ProgramCard, PurchaseOrder, ReissueReturn, WarehouseLog } from "@/lib/types";
 
-type ColKey = "po_no" | "quality_name" | "vendor" | "dying_house" | "lot_no" | "metres";
+type ColKey = "po_no" | "quality_name" | "vendor" | "dying_house" | "lot_no" | "metres" | "status";
 
 const COLUMNS: { key: ColKey; label: string; num?: boolean }[] = [
   { key: "po_no", label: "PO No" },
@@ -23,6 +24,7 @@ const COLUMNS: { key: ColKey; label: string; num?: boolean }[] = [
   { key: "dying_house", label: "Dyeing House" },
   { key: "lot_no", label: "Lot No" },
   { key: "metres", label: "Stored Metres", num: true },
+  { key: "status", label: "Status" },
 ];
 
 type Row = {
@@ -36,6 +38,8 @@ type Row = {
   vendor: string | null;
   dying_house: string | null;
   program_uid: string | null;
+  /** Lot-level: "Final Qty Received" only when every row for the lot says so. */
+  status: WarehouseStatus;
 };
 
 export function WarehouseClient({
@@ -55,6 +59,7 @@ export function WarehouseClient({
   const { data: reissues = [] } = useQuery({ queryKey: ["reissue_return"], queryFn: fetchReissueReturns, initialData: initialReissues });
 
   const [search, setSearch] = useState("");
+  const [view, setView] = useState<"all" | "waiting" | "final">("all");
   const [sort, setSort] = useState<{ key: ColKey; dir: "asc" | "desc" }>({ key: "po_no", dir: "asc" });
   const [detailKey, setDetailKey] = useState<string | null>(null);
 
@@ -94,18 +99,26 @@ export function WarehouseClient({
           key, lot_no: w.lot_no, po_unique_id: w.po_unique_id, entries: [], metres: 0,
           po_no: po?.po_no ?? null, quality_name: po?.quality ?? po?.quality_name ?? null, vendor: po?.vendor_name ?? null,
           dying_house: program?.dying_house_name ?? null, program_uid: program?.program_uid ?? null,
+          status: WH_WAITING,
         };
         groups.set(key, g);
       }
       g.entries.push(w);
       g.metres += w.passed_qty ?? 0;
     }
+    for (const g of groups.values()) g.status = lotStatus(g.entries);
     return [...groups.values()];
   }, [warehouse, poByUid, programByLot]);
+
+  const counts = useMemo(() => {
+    const final = allRows.filter((r) => isFinalQty(r.status)).length;
+    return { all: allRows.length, waiting: allRows.length - final, final };
+  }, [allRows]);
 
   const rows = useMemo(() => {
     const q = search.trim().toLowerCase();
     let list = allRows;
+    if (view !== "all") list = list.filter((r) => (view === "final" ? isFinalQty(r.status) : !isFinalQty(r.status)));
     if (q) {
       list = list.filter((r) =>
         [r.po_no, r.quality_name, r.vendor, r.dying_house, r.lot_no].some((f) => (f ?? "").toLowerCase().includes(q)),
@@ -121,7 +134,7 @@ export function WarehouseClient({
       if (sort.key === "metres") return ((av as number) - (bv as number)) * dir;
       return String(av).localeCompare(String(bv), undefined, { numeric: true }) * dir;
     });
-  }, [allRows, search, sort]);
+  }, [allRows, search, sort, view]);
 
   const toggleSort = (k: ColKey) =>
     setSort((s) => (s.key === k ? { key: k, dir: s.dir === "asc" ? "desc" : "asc" } : { key: k, dir: "asc" }));
@@ -133,6 +146,8 @@ export function WarehouseClient({
     if (k === "metres") return <span className="mono">{fmtNum(r.metres)}</span>;
     if (k === "po_no") return <span className="strong mono">{r.po_no ?? "—"}</span>;
     if (k === "lot_no") return <span className="mono">{r.lot_no ?? "—"}</span>;
+    if (k === "status")
+      return <span className={`pill ${isFinalQty(r.status) ? "success" : "warning"}`}>{r.status}</span>;
     return <span>{r[k] ?? "—"}</span>;
   };
 
@@ -163,6 +178,17 @@ export function WarehouseClient({
       </div>
 
       <div className="toolbar">
+        <div className="seg" role="group" aria-label="Filter by lot status">
+          {([
+            { key: "all", label: "All", n: counts.all },
+            { key: "waiting", label: WH_WAITING, n: counts.waiting },
+            { key: "final", label: WH_FINAL, n: counts.final },
+          ] as const).map((s) => (
+            <button key={s.key} type="button" className={view === s.key ? "on" : ""} aria-pressed={view === s.key} onClick={() => setView(s.key)}>
+              {s.label}<span className="cnt">{s.n}</span>
+            </button>
+          ))}
+        </div>
         <div className="search">
           <Icon name="search" size={15} />
           <input ref={searchRef} placeholder="Search PO, quality, vendor, dyeing house, lot…" value={search} onChange={(e) => setSearch(e.target.value)} />

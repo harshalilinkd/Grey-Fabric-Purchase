@@ -1,8 +1,6 @@
 import { createClient } from "@/lib/supabase/client";
+import { FAB_COLUMNS } from "@/lib/columns";
 import type { FabricReceipt, FabricReceiptFormValues } from "@/lib/types";
-
-const FAB_COLUMNS =
-  "id, receipt_id, lot_no, po_unique_id, design_no, programmed_meters, received_meters, received_date, remark, created_at";
 
 const numOrNull = (s: string): number | null => {
   const t = s.trim();
@@ -25,7 +23,12 @@ export async function fetchFabricReceipts(): Promise<FabricReceipt[]> {
 /**
  * Record dyed fabric received back — one row per design that has a received value.
  * `receipt_id` carries a per-row suffix because one submit inserts many rows into the
- * UNIQUE column. `programmed_meters` is snapshotted from the form.
+ * UNIQUE column. `programmed_meters` is the "total should receive" snapshot.
+ *
+ * The follow-up fields are lot-level: `next_followup_date` and the `remaining_qty`
+ * SNAPSHOT (the lot's outstanding metres immediately BEFORE this entry) are written
+ * onto every row of the submit, so each line records the state it was entered under.
+ * Neither is ever recalculated on read.
  */
 export async function createFabricReceipt(values: FabricReceiptFormValues): Promise<void> {
   const supabase = createClient();
@@ -37,10 +40,15 @@ export async function createFabricReceipt(values: FabricReceiptFormValues): Prom
       lot_no: values.lot_no.trim() || null,
       po_unique_id: values.po_unique_id || null,
       design_no: d.design_no.trim() || null,
+      color: d.color.trim() || null,
       programmed_meters: d.programmed,
       received_meters: numOrNull(d.received),
       received_date: values.received_date || null,
       remark: values.remark.trim() || null,
+      next_followup_date: values.next_followup_date,
+      remaining_qty: values.remaining_qty,
+      // Stage 3 ('original') or Stage 7 ('reissue') — same table, same fields
+      cycle: values.cycle,
     }));
   if (rows.length === 0) throw new Error("Enter received metres for at least one design.");
   const { error } = await supabase.from("fabric_receipts").insert(rows);

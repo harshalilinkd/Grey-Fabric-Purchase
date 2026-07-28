@@ -31,6 +31,17 @@ export async function fetchActiveMasterNames(table: MasterTable): Promise<string
     .map((r) => r.name as string);
 }
 
+/** Holiday dates (`YYYY-MM-DD`) from the holidays master — non-working days when planning
+ *  dates. Returns empty rather than throwing so a form still works without the table. */
+export async function fetchHolidayDates(): Promise<string[]> {
+  const supabase = createClient();
+  const { data, error } = await supabase.from("holidays").select("holiday_date");
+  if (error) return [];
+  return ((data ?? []) as { holiday_date: string | null }[])
+    .map((r) => r.holiday_date)
+    .filter((d): d is string => !!d);
+}
+
 export async function createMaster(table: MasterTable, name: string): Promise<void> {
   const supabase = createClient();
   const { error } = await supabase.from(table).insert({ name: name.trim() });

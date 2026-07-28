@@ -3,8 +3,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { Icon } from "@/components/ui/Icon";
 import { fetchPoProgramCards, fetchPoShipments, fetchPoStock } from "@/lib/purchase-orders";
-import { CHECKS_METHOD_LABEL, DIRECT_SUBTYPE_LABEL, SOURCING_LABEL, isFinishedGoodsPo } from "@/lib/po-meta";
-import { fmtAmount, fmtDate, fmtNum } from "@/lib/format";
+import { CHECKS_METHOD_LABEL, DIRECT_SUBTYPE_LABEL, isFinishedGoodsPo, sourcingLabel } from "@/lib/po-meta";
+import { addCalendarDays, fmtAmount, fmtDate, fmtNum } from "@/lib/format";
 import { useEscClose } from "@/lib/use-esc-close";
 import type { PurchaseOrder } from "@/lib/types";
 
@@ -24,6 +24,8 @@ export function TrackModal({ po, onClose }: { po: PurchaseOrder; onClose: () => 
   const stocked = stock.reduce((sum, w) => sum + (w.passed_qty ?? 0), 0);
   const stockPct = ordered > 0 ? Math.min(100, Math.round((stocked / ordered) * 100)) : stocked > 0 ? 100 : 0;
   const fullyStocked = ordered > 0 && stocked >= ordered;
+  // A PO stays open until everything received against it equals its quantity.
+  const isClosed = finished ? fullyStocked : fullyReceived;
   const loading = finished ? stockQ.isLoading : shipmentsQ.isLoading || programsQ.isLoading;
   const errored = finished ? stockQ.isError : shipmentsQ.isError || programsQ.isError;
 
@@ -44,7 +46,7 @@ export function TrackModal({ po, onClose }: { po: PurchaseOrder; onClose: () => 
           {/* metadata */}
           <div className="sum-title" style={{ marginTop: 0 }}>Order details</div>
           <div className="sum">
-            <div className="sum-row"><span>Sourcing path</span><b>{po.sourcing_path ? SOURCING_LABEL[po.sourcing_path] ?? po.sourcing_path : "—"}</b></div>
+            <div className="sum-row"><span>Source</span><b>{sourcingLabel(po.sourcing_path)}</b></div>
             <div className="sum-row"><span>Quality</span><b>{po.quality ?? "—"}</b></div>
             <div className="sum-row"><span>Process</span><b>{po.process ?? "—"}</b></div>
             {po.sourcing_path === "checks_weaves" && (
@@ -58,9 +60,18 @@ export function TrackModal({ po, onClose }: { po: PurchaseOrder; onClose: () => 
             {po.sourcing_path === "direct_purchase" && po.direct_subtype && (
               <div className="sum-row"><span>Cloth type</span><b>{DIRECT_SUBTYPE_LABEL[po.direct_subtype] ?? po.direct_subtype}</b></div>
             )}
+            {!finished && <div className="sum-row"><span>Dyeing house</span><b>{po.dying_house_name ?? "—"}</b></div>}
             <div className="sum-row"><span>Order no</span><b className="mono">{po.order_no ?? "—"}</b></div>
             <div className="sum-row"><span>Delivery days</span><b className="mono">{po.delivery_days ?? "—"}</b></div>
+            <div className="sum-row">
+              <span>{finished ? "Planned arrival" : "Planned grey arrival"}</span>
+              <b className="mono">{addCalendarDays(po.order_date, po.delivery_days)}</b>
+            </div>
             <div className="sum-row"><span>Ordered</span><b className="mono">{fmtNum(ordered)} m · {fmtAmount(po.amount)}</b></div>
+            <div className="sum-row">
+              <span>Status</span>
+              <b><span className={`pill ${isClosed ? "success" : "info"}`}>{isClosed ? "Closed" : "Open"}</span></b>
+            </div>
           </div>
 
           {/* lifecycle */}

@@ -284,7 +284,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 26px;
+  padding: 0 16px;   /* matches .content so the header aligns with the content below */
   position: sticky;
   top: 0;
   z-index: 20;
@@ -355,13 +355,14 @@
 }
 
 /* ---------- CONTENT ----------
-   Fills the full width between the sidebar and the window edge —
-   no max-width cap, just consistent side padding. */
+   Fills the FULL width between the sidebar and the window edge. No max-width cap and
+   no auto margins: a centred column stranded ~150px of dead space down each side on a
+   wide monitor, which is exactly the room the wide pipeline tables need. Side padding
+   is the minimum that keeps cards off the window edge, and matches .topnav so the
+   header and the content below it line up on the same vertical. */
 .content {
-  padding: 30px 32px 64px;
+  padding: 24px 16px 56px;
   width: 100%;
-  max-width: 1366px;   /* centered column — dense, composed tables on wide screens */
-  margin: 0 auto;
   flex: 1;
 }
 
@@ -600,7 +601,7 @@ a.li:hover { background: var(--card-2); }
     background: color-mix(in srgb, var(--fg) 40%, transparent);
     animation: fade 0.2s ease;
   }
-  .topnav { padding: 0 16px; }
-  .content { padding: 20px 16px 48px; }
+  .topnav { padding: 0 12px; }
+  .content { padding: 18px 12px 40px; }
   .grid-2 { grid-template-columns: 1fr; }
 }

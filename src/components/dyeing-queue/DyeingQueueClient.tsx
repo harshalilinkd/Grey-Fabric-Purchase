@@ -11,8 +11,9 @@ import { ProgramCardDetailModal } from "@/components/program-cards/ProgramCardDe
 import { deleteShipment, fetchAllShipments } from "@/lib/shipments";
 import { fetchPoColorVariants, fetchPurchaseOrders } from "@/lib/purchase-orders";
 import { createProgramCard, deleteProgramCard, fetchProgramCards } from "@/lib/program-cards";
-import { fetchActiveMasterNames } from "@/lib/masters";
-import { fetchQcCheckedLotNos } from "@/lib/dyeing-queue";
+import { fetchActiveMasterNames, fetchHolidayDates } from "@/lib/masters";
+import { fetchClosedQcLotNos } from "@/lib/dyeing-queue";
+import { isDirectToDyer } from "@/lib/delivery-mode";
 import { optimisticList, optimisticRemove } from "@/lib/optimistic";
 import { fmtAmount, fmtDate, fmtNum, round2 } from "@/lib/format";
 import { useEscClose } from "@/lib/use-esc-close";
@@ -67,8 +68,10 @@ export function DyeingQueueClient({
   const { data: shipments = [], isFetching } = useQuery({ queryKey: ["shipments_all"], queryFn: fetchAllShipments, initialData: initialShipments });
   const { data: pos = [] } = useQuery({ queryKey: ["purchase_orders"], queryFn: fetchPurchaseOrders, initialData: initialPos });
   const { data: programs = [] } = useQuery({ queryKey: PC_KEY, queryFn: fetchProgramCards, initialData: initialPrograms });
-  const { data: qcLots = [] } = useQuery({ queryKey: ["qc_lots"], queryFn: fetchQcCheckedLotNos, initialData: initialQcLots });
+  const { data: qcLots = [] } = useQuery({ queryKey: ["qc_lots"], queryFn: fetchClosedQcLotNos, initialData: initialQcLots });
   const { data: dyeingHouseNames = [] } = useQuery({ queryKey: ["masters-active", "dyeing_houses"], queryFn: () => fetchActiveMasterNames("dyeing_houses") });
+  // Non-working days, so the planned dyeing-return date counts working days only.
+  const { data: holidays = [] } = useQuery({ queryKey: ["holidays"], queryFn: fetchHolidayDates });
 
   const [search, setSearch] = useState("");
   const [view, setView] = useState<"all" | "pending" | "created">("all");
@@ -135,7 +138,15 @@ export function DyeingQueueClient({
       const lot = r.shipment.lot_no;
       if (r.created || !lot || seen.has(lot)) continue;
       seen.add(lot);
-      out.push({ lot_no: lot, po_unique_id: r.shipment.po_unique_id, po_id: r.po?.id ?? null, po_no: r.po?.po_no ?? null, vendor: r.po?.vendor_name ?? null });
+      out.push({
+        lot_no: lot,
+        po_unique_id: r.shipment.po_unique_id,
+        po_id: r.po?.id ?? null,
+        po_no: r.po?.po_no ?? null,
+        vendor: r.po?.vendor_name ?? null,
+        dying_house_name: r.po?.dying_house_name ?? null,
+        lot_meters: r.shipment.sent_quantity ?? null,
+      });
     }
     return out;
   }, [baseQueue]);
@@ -230,7 +241,16 @@ export function DyeingQueueClient({
                 {rows.map((r) => (
                   <tr key={r.shipment.id}>
                     <td><span className="dim">{fmtDate(r.shipment.shipment_date)}</span></td>
-                    <td><span className="strong mono">{r.shipment.lot_no ?? "—"}</span></td>
+                    <td>
+                      <span className="strong mono">{r.shipment.lot_no ?? "—"}</span>
+                      {/* Drop-shipped: the rolls are already sitting at the dyeing house, so
+                          there is nothing here to pick — only the card gets couriered out. */}
+                      {isDirectToDyer(r.shipment.delivery_mode) && (
+                        <span className="pill info" style={{ marginLeft: 6 }} title="Vendor drop-shipped these rolls straight to the dyeing house — send the program card only">
+                          Direct to dyer
+                        </span>
+                      )}
+                    </td>
                     <td className="num mono">{fmtNum(r.shipment.sent_quantity)}</td>
                     <td><span className="mono">{r.po?.po_no ?? "—"}</span></td>
                     <td>{r.program ? <span className="strong mono">{r.program.program_uid}</span> : <span className="dim">—</span>}</td>
@@ -287,6 +307,7 @@ export function DyeingQueueClient({
         nextProgramId={nextProgramId}
         saving={createM.isPending}
         dyeingHouseSuggestions={dyeingHouseNames}
+        holidays={holidays}
         onClose={() => setFormOpen(false)}
         onSave={(v) => createM.mutate(v)}
       />

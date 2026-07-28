@@ -1,12 +1,9 @@
 import { createClient } from "@/lib/supabase/server";
+import { PO_COLUMNS, PC_COLUMNS } from "@/lib/columns";
 import { WarehouseClient } from "@/components/warehouse/WarehouseClient";
 import type { ProgramCard, PurchaseOrder, ReissueReturn, WarehouseLog } from "@/lib/types";
 
 const WH_COLUMNS = "id, store_id, po_unique_id, lot_no, design_no, passed_qty, stored_date, status, created_at";
-const PO_COLUMNS =
-  "id, unique_id, vendor_name, process, quality, order_date, order_no, po_no, delivery_days, quantity, rate, amount, created_at, updated_at, sourcing_path, quality_name, selling_merchant_no, vendor_design_no, sampling_status, cad_ref, handloom_ref, direct_subtype";
-const PC_COLUMNS =
-  "id, program_uid, lot_no, po_unique_id, program_date, dying_house_name, total_meters, color_cutting_attached, total_color_cutting, delivery_days, pdf_url, created_at";
 const RR_COLUMNS =
   "id, reissue_id, original_po_unique_id, original_lot_no, original_design_no, reissue_date, reissue_qty, reason, new_lot_no, status, created_at";
 

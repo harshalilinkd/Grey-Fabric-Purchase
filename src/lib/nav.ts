@@ -33,7 +33,7 @@ export const NAV: NavGroup[] = [
     heading: "Dyeing",
     items: [
       { label: "Dyeing Queue", path: "/dyeing-queue", icon: "lines", blurb: "Lots awaiting or in dyeing — create & view program cards here" },
-      { label: "Dyeing Follow Up", path: "/dyeing-follow-up", icon: "clock", blurb: "Chase dyeing houses on lots that are due or overdue" },
+      { label: "Dyeing House Follow Up (Sent)", path: "/dyeing-follow-up", icon: "clock", blurb: "Metres dispatched out to a dyeing house — reconciled when they come back" },
       { label: "Fabric Receipts", path: "/fabric-receipts", icon: "truck", blurb: "Receive dyed fabric back from the dyeing house" },
     ],
   },

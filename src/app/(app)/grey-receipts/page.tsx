@@ -1,10 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
+import { PO_COLUMNS, SH_COLUMNS } from "@/lib/columns";
 import { GreyHouseClient } from "@/components/grey-house/GreyHouseClient";
 import type { Profile, PurchaseOrder, Shipment } from "@/lib/types";
-
-const PO_COLUMNS =
-  "id, unique_id, vendor_name, process, quality, order_date, order_no, po_no, delivery_days, quantity, rate, amount, created_at, updated_at";
-const SH_COLUMNS = "id, shipment_id, po_unique_id, shipment_date, sent_quantity, lot_no, created_at";
 
 export default async function GreyHouseFollowUpPage() {
   const supabase = await createClient();

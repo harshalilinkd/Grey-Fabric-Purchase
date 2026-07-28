@@ -24,7 +24,8 @@ import { optimisticList, optimisticPatch, optimisticRemove } from "@/lib/optimis
 import { usePagePrimaryAction, usePageSearchInput, useRegisterCommands } from "@/components/experience/CommandProvider";
 import { fetchActiveMasterNames } from "@/lib/masters";
 import { fetchWarehouseLog } from "@/lib/warehouse";
-import { QUALITY_DEFAULTS, SOURCING_LABEL, isFinishedGoodsPo } from "@/lib/po-meta";
+import { fetchAllShipments } from "@/lib/shipments";
+import { QUALITY_DEFAULTS, isFinishedGoodsPo, sourcingLabel } from "@/lib/po-meta";
 import { fmtDate, fmtNum, round2 } from "@/lib/format";
 import { useEscClose } from "@/lib/use-esc-close";
 import type { PoColorVariant, PoFormValues, PurchaseOrder } from "@/lib/types";
@@ -32,15 +33,17 @@ import type { PoColorVariant, PoFormValues, PurchaseOrder } from "@/lib/types";
 const PO_KEY = ["purchase_orders"] as const;
 
 type ColKey =
-  | "po_no" | "vendor_name" | "quality" | "sourcing_path"
-  | "quantity" | "order_date" | "process";
+  | "po_no" | "vendor_name" | "dying_house_name" | "quality" | "sourcing_path"
+  | "quantity" | "status" | "order_date" | "process";
 
 const COLUMNS: { key: ColKey; label: string; num?: boolean }[] = [
   { key: "po_no", label: "PO No" },
   { key: "vendor_name", label: "Vendor" },
+  { key: "dying_house_name", label: "Dyeing House" },
   { key: "quality", label: "Quality" },
-  { key: "sourcing_path", label: "Sourcing" },
+  { key: "sourcing_path", label: "Source" },
   { key: "quantity", label: "Total Qty", num: true },
+  { key: "status", label: "Status" },
   { key: "order_date", label: "Order date" },
   { key: "process", label: "Process" },
 ];
@@ -59,6 +62,7 @@ function poFields(v: PoFormValues) {
   const rate = num(v.rate);
   return {
     vendor_name: v.vendor_name.trim() || null,
+    dying_house_name: path === "direct_purchase" || path === "imported" ? null : v.dying_house_name.trim() || null,
     process: v.process.trim() || null,
     quality: v.quality.trim() || null,
     order_date: v.order_date || null,
@@ -98,13 +102,16 @@ export function PurchaseOrdersClient({
   const { data: qualityNames = [] } = useQuery({ queryKey: ["po-quality-names"], queryFn: fetchQualityNames, initialData: initialQualityNames });
   const { data: vendorNames = [] } = useQuery({ queryKey: ["masters-active", "vendors"], queryFn: () => fetchActiveMasterNames("vendors") });
   const { data: processNames = [] } = useQuery({ queryKey: ["masters-active", "processes"], queryFn: () => fetchActiveMasterNames("processes") });
+  const { data: dyeingHouseNames = [] } = useQuery({ queryKey: ["masters-active", "dyeing_houses"], queryFn: () => fetchActiveMasterNames("dyeing_houses") });
   const { data: warehouse = [] } = useQuery({ queryKey: ["warehouse_all"], queryFn: fetchWarehouseLog });
+  const { data: shipments = [] } = useQuery({ queryKey: ["shipments_all"], queryFn: fetchAllShipments });
 
   const [search, setSearch] = useState("");
+  const [view, setView] = useState<"all" | "open" | "closed">("all");
   const [sort, setSort] = useState<{ key: ColKey; dir: "asc" | "desc" }>({ key: "po_no", dir: "asc" });
   const [visible, setVisible] = useState<Record<ColKey, boolean>>({
-    po_no: true, vendor_name: true, quality: true, sourcing_path: true,
-    quantity: true, order_date: true, process: false,
+    po_no: true, vendor_name: true, dying_house_name: true, quality: true, sourcing_path: true,
+    quantity: true, status: true, order_date: true, process: false,
   });
   const [colMenu, setColMenu] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
@@ -118,7 +125,7 @@ export function PurchaseOrdersClient({
   const searchRef = useRef<HTMLInputElement | null>(null);
   usePageSearchInput(searchRef);
   const openNew = useCallback(() => { setEditing(null); setFormOpen(true); }, []);
-  usePagePrimaryAction("New PO", openNew);
+  usePagePrimaryAction("New Purchase Order", openNew);
   useRegisterCommands(
     () => [{ id: "po:search", title: "Search purchase orders", group: "This page", icon: "search", run: () => searchRef.current?.focus() }],
     [],
@@ -138,6 +145,27 @@ export function PurchaseOrdersClient({
     return m;
   }, [warehouse]);
 
+  // Metres received against each PO — grey shipments on the dyeing paths, stocked metres
+  // on finished goods (same source as the "In stock" chip, so the two never disagree).
+  const sentByUid = useMemo(() => {
+    const m: Record<string, number> = {};
+    for (const s of shipments) if (s.po_unique_id) m[s.po_unique_id] = (m[s.po_unique_id] ?? 0) + (s.sent_quantity ?? 0);
+    return m;
+  }, [shipments]);
+
+  const receivedFor = useCallback(
+    (p: PurchaseOrder) => (isFinishedGoodsPo(p) ? stockedByUid[p.unique_id] ?? 0 : sentByUid[p.unique_id] ?? 0),
+    [stockedByUid, sentByUid],
+  );
+  /** A PO stays open until everything received against it equals its quantity.
+   *  Same formula as the dashboard's "Open POs" KPI, so the two reconcile. */
+  const isOpen = useCallback((p: PurchaseOrder) => (p.quantity ?? 0) - receivedFor(p) > 0, [receivedFor]);
+
+  const counts = useMemo(() => {
+    const open = pos.filter(isOpen).length;
+    return { all: pos.length, open, closed: pos.length - open };
+  }, [pos, isOpen]);
+
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: PO_KEY });
   };
@@ -153,7 +181,7 @@ export function PurchaseOrdersClient({
       return { rollback: optimisticList<PurchaseOrder>(qc, PO_KEY, (cur) => [temp, ...cur]) };
     },
     onError: (e: Error, _v, ctx) => { ctx?.rollback(); toast.error(e.message); },
-    onSuccess: () => toast.success("Purchase order created"),
+    onSuccess: (po) => toast.success(`Purchase Order ${po.unique_id} created successfully!`),
     onSettled: () => invalidate(),
   });
 
@@ -163,12 +191,11 @@ export function PurchaseOrdersClient({
       setFormOpen(false);
       setEditing(null);
       await qc.cancelQueries({ queryKey: PO_KEY });
-      qc.invalidateQueries({ queryKey: ["po-variants", id] });
       return { rollback: optimisticPatch<PurchaseOrder>(qc, PO_KEY, (p) => p.id === id, poFields(v) as Partial<PurchaseOrder>) };
     },
     onError: (e: Error, _vars, ctx) => { ctx?.rollback(); toast.error(e.message); },
     onSuccess: () => toast.success("Purchase order updated"),
-    onSettled: () => invalidate(),
+    onSettled: (_d, _e, vars) => { invalidate(); qc.invalidateQueries({ queryKey: ["po-variants", vars.id] }); },
   });
 
   const restoreM = useMutation({
@@ -196,7 +223,8 @@ export function PurchaseOrdersClient({
   // failed metres routed to Reissue & Return, and a QC record written.
   const receiveM = useMutation({
     mutationFn: ({ po, values }: { po: PurchaseOrder; values: ReceiveStockValues }) =>
-      receiveAndQc(po.unique_id, values),
+      // the PO's ordered qty decides whether this receipt is the lot's final one
+      receiveAndQc(po.unique_id, { ...values, po_quantity: po.quantity }),
     onError: (e: Error) => toast.error(e.message),
     onSuccess: (res) => {
       const parts = [`${res.warehouse} stored`];
@@ -238,14 +266,16 @@ export function PurchaseOrdersClient({
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
     let rows = pos;
+    if (view !== "all") rows = rows.filter((p) => (view === "open" ? isOpen(p) : !isOpen(p)));
     if (query) {
       rows = rows.filter((p) =>
-        [p.po_no, p.vendor_name, p.process, p.quality, SOURCING_LABEL[p.sourcing_path ?? ""]]
+        [p.po_no, p.vendor_name, p.dying_house_name, p.process, p.quality, sourcingLabel(p.sourcing_path)]
           .some((f) => (f ?? "").toLowerCase().includes(query)),
       );
     }
     const dir = sort.dir === "asc" ? 1 : -1;
     return [...rows].sort((a, b) => {
+      if (sort.key === "status") return ((isOpen(a) ? 0 : 1) - (isOpen(b) ? 0 : 1)) * dir;
       const av = a[sort.key as keyof PurchaseOrder];
       const bv = b[sort.key as keyof PurchaseOrder];
       if (av == null && bv == null) return 0;
@@ -254,7 +284,7 @@ export function PurchaseOrdersClient({
       if (sort.key === "quantity") return ((av as number) - (bv as number)) * dir;
       return String(av).localeCompare(String(bv), undefined, { numeric: true }) * dir;
     });
-  }, [pos, search, sort]);
+  }, [pos, search, sort, view, isOpen]);
 
   const toggleSort = (k: ColKey) =>
     setSort((s) => (s.key === k ? { key: k, dir: s.dir === "asc" ? "desc" : "asc" } : { key: k, dir: "asc" }));
@@ -263,7 +293,15 @@ export function PurchaseOrdersClient({
     if (k === "order_date") return <span className="dim">{fmtDate(p.order_date)}</span>;
     if (k === "quantity") return <span className="mono">{fmtNum(p.quantity)}</span>;
     if (k === "po_no") return <span className="strong mono">{p.po_no ?? "—"}</span>;
-    if (k === "sourcing_path") return p.sourcing_path ? <span className="pill plain">{SOURCING_LABEL[p.sourcing_path] ?? p.sourcing_path}</span> : <span className="dim">—</span>;
+    if (k === "sourcing_path") return p.sourcing_path ? <span className="pill plain">{sourcingLabel(p.sourcing_path)}</span> : <span className="dim">—</span>;
+    if (k === "status") {
+      const open = isOpen(p);
+      return (
+        <span className={`pill ${open ? "info" : "success"}`} title={`${fmtNum(receivedFor(p))} / ${fmtNum(p.quantity)} m received`}>
+          {open ? "Open" : "Closed"}
+        </span>
+      );
+    }
     return <span>{(p[k as keyof PurchaseOrder] as string | null) ?? "—"}</span>;
   };
 
@@ -280,11 +318,22 @@ export function PurchaseOrdersClient({
           <p>Grey fabric purchase orders from vendors</p>
         </div>
         <button className="btn btn-primary" onClick={openNew}>
-          <Icon name="plus" />New PO
+          <Icon name="plus" />New Purchase Order
         </button>
       </div>
 
       <div className="toolbar">
+        <div className="seg" role="group" aria-label="Filter by status">
+          {([
+            { key: "all", label: "All", n: counts.all },
+            { key: "open", label: "Open", n: counts.open },
+            { key: "closed", label: "Closed", n: counts.closed },
+          ] as const).map((s) => (
+            <button key={s.key} type="button" className={view === s.key ? "on" : ""} aria-pressed={view === s.key} onClick={() => setView(s.key)}>
+              {s.label}<span className="cnt">{s.n}</span>
+            </button>
+          ))}
+        </div>
         <div className="search">
           <Icon name="search" size={15} />
           <input ref={searchRef} placeholder="Search PO, vendor, quality, design no…" value={search} onChange={(e) => setSearch(e.target.value)} />
@@ -377,7 +426,7 @@ export function PurchaseOrdersClient({
             <p>{hasData ? "Try a different search or clear filters." : "Create your first PO to get started."}</p>
             {!hasData && (
               <button className="btn btn-primary" onClick={openNew}>
-                <Icon name="plus" />New PO
+                <Icon name="plus" />New Purchase Order
               </button>
             )}
           </div>
@@ -391,6 +440,7 @@ export function PurchaseOrdersClient({
         qualitySuggestions={qualitySuggestions}
         vendorSuggestions={vendorNames}
         processSuggestions={processNames}
+        dyeingHouseSuggestions={dyeingHouseNames}
         onClose={() => { setFormOpen(false); setEditing(null); }}
         onSave={(v) => (editing ? updateM.mutate({ id: editing.id, v }) : createM.mutate(v))}
       />

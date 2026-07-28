@@ -115,6 +115,9 @@ td .dim { color: var(--muted); }
 .modal {
   position: relative; background: var(--card); border: 1px solid var(--border);
   border-radius: 14px; width: calc(100% - 2rem); max-width: 560px; max-height: 92vh;
+  /* dvh accounts for mobile browser chrome, where 92vh can exceed the VISIBLE viewport and
+     push the footer off-screen. Declared twice so older engines keep the vh value. */
+  max-height: min(92vh, calc(100dvh - 32px));
   overflow: hidden; display: flex; flex-direction: column;
   box-shadow: var(--sh-md); animation: rise 0.22s ease;
 }
@@ -460,6 +463,34 @@ tr.clickable:focus-within { background: var(--card-2); }
 
 /* read-only auto code cell in the colour editor */
 .design-row .di.code { background: var(--card-2); color: var(--fg-2); text-align: center; font-weight: 700; cursor: default; }
+/* the PO colour-breakdown rows (code · colour · metres · remove) */
+/* Keeps an id and its trailing status pill on one line inside a table cell. */
+.nowrap { display: inline-flex; align-items: center; white-space: nowrap; }
+
+/* ---------- SLA standing (dashboard overlay) ---------- */
+.sla-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(158px, 1fr)); gap: 8px; }
+.sla-cell {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--card-2); min-height: 40px;
+  transition: border-color 0.13s, background 0.13s;
+}
+.sla-cell:hover { border-color: var(--border-strong); background: var(--card); }
+.sla-cell.late { border-color: var(--bad-line, var(--border-strong)); background: var(--bad-bg); }
+.sla-stage { font-size: 10px; font-weight: 700; letter-spacing: 0.6px; text-transform: uppercase; color: var(--muted); }
+.sla-label { font-size: 12.5px; font-weight: 600; color: var(--fg-2); }
+.sla-val { font-size: 13px; color: var(--fg); font-variant-numeric: tabular-nums; }
+.sla-val b { font-weight: 700; }
+.sla-val b.ok { color: var(--ok); font-size: 12.5px; }
+.sla-cell.late .sla-val b { color: var(--bad); }
+.sla-val small { color: var(--muted); font-size: 11px; }
+.sla-hist { font-size: 11px; color: var(--muted); }
+
+.design-rows { display: flex; flex-direction: column; gap: 8px; }
+/* Row-adding button + its keyboard-shortcut hint, on one line under a data grid. */
+.grid-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 10px; }
+.grid-actions .field-hint { margin-top: 0; }
+.grid-actions .field-hint b { color: var(--fg-2); font-weight: 700; }
 
 /* ---------- RECEIVE & QC (finished-goods receipt) ---------- */
 .qc-checks { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 4px 0 2px; }
@@ -490,12 +521,100 @@ tr.clickable:focus-within { background: var(--card-2); }
   font-variant-numeric: tabular-nums;
 }
 
-/* ---------- PROGRAM CARD MODAL: bounded scroll so the body scrolls + foot/add stay reachable ----------
-   The form wraps body+foot; without flex constraints a tall form overflows and .modal's overflow:hidden
-   clips it (nothing scrolls). Make the form fill the modal, the body the only scroller, the foot pinned. */
-.modal.pcd-modal > form { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow: hidden; }
-.modal.pcd-modal .modal-body { flex: 1 1 auto; min-height: 0; }
-.modal.pcd-modal .modal-foot { flex: 0 0 auto; }
+/* ---------- MODAL SCROLL CONTAINMENT (applies to EVERY modal) ----------
+   `.modal` is a bounded flex column (max-height + overflow:hidden), so any tall child must be
+   allowed to SHRINK. If it isn't, the content overflows, `overflow:hidden` clips it, and the
+   footer — which holds the submit button — is cut off the bottom of the screen with nothing
+   scrolling. That is the failure this rule exists to prevent.
+
+   `min-height: 0` is the load-bearing declaration: a flex item defaults to `min-height: auto`
+   and flatly refuses to shrink below its content, which defeats the body's `overflow-y: auto`.
+
+   Two DOM shapes exist and both are handled:
+     .modal > .modal-head / .modal-body / .modal-foot          (plain modals)
+     .modal > .modal-head + <form> > .modal-body / .modal-foot (form modals — the majority)
+   Head and foot stay pinned at their natural height; the body is the ONLY scroller.
+   Short modals are unaffected — with `height: auto` there is no free space for flex-grow to
+   distribute, so they still shrink-wrap their content. */
+.modal > form { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow: hidden; }
+.modal > .modal-head,
+.modal > .modal-foot,
+.modal > form > .modal-foot { flex: 0 0 auto; }
+.modal > .modal-body,
+.modal > form > .modal-body { flex: 1 1 auto; min-height: 0; }
+
+/* ---------- QC: the "actually found" row under a ticked design ---------- */
+.qc-actual {
+  display: grid;
+  grid-template-columns: auto 1fr 1fr 100px;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px 10px 34px;
+  background: var(--inset);
+  border-radius: 0 0 8px 8px;
+  margin: -2px 0 6px;
+}
+.qc-actual-label { font-size: 11px; font-weight: 600; color: var(--muted); white-space: nowrap; }
+.qc-actual input {
+  height: 36px;
+  font-size: 12.5px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--fg);
+  width: 100%;
+}
+.qc-actual input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+@media (max-width: 640px) { .qc-actual { grid-template-columns: 1fr 1fr; padding-left: 12px; } .qc-actual-label { grid-column: 1 / -1; } }
+@media (pointer: coarse) { .qc-actual input { height: 44px; } }
+
+/* ---------- GREY HOUSE: instalments + their lot rows ---------- */
+/* One block per delivery instalment in the history column. */
+.inst-block {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+  padding: 12px 13px;
+  margin-bottom: 10px;
+}
+.inst-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  font-size: 12px;
+  color: var(--fg-2);
+  margin-bottom: 8px;
+}
+.inst-head .strong { color: var(--fg); font-weight: 700; }
+.inst-remark {
+  font-size: 12px;
+  color: var(--fg-2);
+  background: var(--inset);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin: 0 0 8px;
+}
+/* Lot-no / metres / remove, one row per lot in the instalment form. */
+.lot-rows { display: flex; flex-direction: column; gap: 10px; }
+.lot-row { display: grid; grid-template-columns: 1fr 108px 40px; gap: 10px; align-items: end; }
+.lot-del {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 0.13s, border-color 0.13s, background 0.13s;
+}
+.lot-del:hover:not(:disabled) { color: var(--bad); border-color: var(--bad); background: var(--bad-bg); }
+.lot-del:disabled { opacity: 0.45; cursor: not-allowed; }
+@media (pointer: coarse) { .lot-del { width: 44px; height: 44px; } .lot-row { grid-template-columns: 1fr 100px 44px; } }
 
 /* ---------- PROGRAM CARD: small auto/read-only field hint ---------- */
 .field-hint { display: block; font-size: 11px; color: var(--muted); margin-top: 5px; }
@@ -527,7 +646,8 @@ tr.clickable:focus-within { background: var(--card-2); }
 .pcd-del:disabled { opacity: 0.4; cursor: not-allowed; color: var(--muted); background: transparent; }
 /* "Add row" lives in its OWN fixed bar between the scrolling body and the foot, so it is ALWAYS
    visible no matter how many rows are added (no sticky edge-cases, never overlaps the last row). */
-.pcd-addbar { flex: 0 0 auto; padding: 12px 22px; border-top: 1px solid var(--border); background: var(--card); }
+.pcd-addbar { flex: 0 0 auto; padding: 12px 22px; border-top: 1px solid var(--border); background: var(--card); display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.pcd-addbar .field-hint { margin-top: 0; }
 /* full-width dashed affordance — quiet until hovered, then lights to the cobalt accent */
 .pcd-add {
   width: 100%; display: inline-flex; align-items: center; justify-content: center;
@@ -542,6 +662,10 @@ tr.clickable:focus-within { background: var(--card-2); }
 .pcd-cut { margin-top: 12px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .pcd-cut-label { font-size: 12px; font-weight: 600; color: var(--fg-2); }
 .pcd-cut-opt { font-weight: 500; color: var(--muted); }
+/* every non-White colour must carry a cutting before the card can be created */
+.pcd-cut-req { font-weight: 600; color: var(--bad); }
+/* why "Create program" is disabled, shown in the modal foot */
+.pcd-blocker { color: var(--bad); font-weight: 600; }
 .pcd-cut input[type="file"] { font-size: 12px; color: var(--fg-2); max-width: 100%; }
 .white-note { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--ok); }
 .cutting-link { display: inline-flex; align-items: center; gap: 5px; color: var(--accent); font-size: 12px; font-weight: 600; }

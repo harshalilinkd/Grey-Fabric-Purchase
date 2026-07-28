@@ -9,9 +9,9 @@ import { ProgramCardFormModal, type AvailableLot } from "./ProgramCardFormModal"
 import { ProgramCardDetailModal } from "./ProgramCardDetailModal";
 import { createProgramCard, fetchProgramCards } from "@/lib/program-cards";
 import { fetchPurchaseOrders } from "@/lib/purchase-orders";
-import { fetchActiveMasterNames } from "@/lib/masters";
+import { fetchActiveMasterNames, fetchHolidayDates } from "@/lib/masters";
 import { fetchAllShipments } from "@/lib/shipments";
-import { fetchQcCheckedLotNos } from "@/lib/dyeing-queue";
+import { fetchClosedQcLotNos } from "@/lib/dyeing-queue";
 import { optimisticList } from "@/lib/optimistic";
 import { fmtNum, round2 } from "@/lib/format";
 import type { ProgramCard, ProgramCardFormValues, PurchaseOrder, Shipment } from "@/lib/types";
@@ -77,10 +77,12 @@ export function ProgramCardsClient({
   });
   const { data: qcLots = [] } = useQuery({
     queryKey: ["qc_lots"],
-    queryFn: fetchQcCheckedLotNos,
+    queryFn: fetchClosedQcLotNos,
     initialData: initialQcLots,
   });
   const { data: dyeingHouseNames = [] } = useQuery({ queryKey: ["masters-active", "dyeing_houses"], queryFn: () => fetchActiveMasterNames("dyeing_houses") });
+  // Non-working days, so the planned dyeing-return date counts working days only.
+  const { data: holidays = [] } = useQuery({ queryKey: ["holidays"], queryFn: fetchHolidayDates });
 
   const [search, setSearch] = useState("");
   const [formOpen, setFormOpen] = useState(false);
@@ -130,7 +132,15 @@ export function ProgramCardsClient({
       if (!s.lot_no || used.has(s.lot_no) || seen.has(s.lot_no)) continue;
       seen.add(s.lot_no);
       const po = poByUid[s.po_unique_id];
-      out.push({ lot_no: s.lot_no, po_unique_id: s.po_unique_id, po_id: po?.id ?? null, po_no: po?.po_no ?? null, vendor: po?.vendor_name ?? null });
+      out.push({
+        lot_no: s.lot_no,
+        po_unique_id: s.po_unique_id,
+        po_id: po?.id ?? null,
+        po_no: po?.po_no ?? null,
+        vendor: po?.vendor_name ?? null,
+        dying_house_name: po?.dying_house_name ?? null,
+        lot_meters: s.sent_quantity ?? null,
+      });
     }
     return out;
   }, [cards, shipments, poByUid]);
@@ -260,6 +270,7 @@ export function ProgramCardsClient({
         nextProgramId={nextProgramId}
         saving={createM.isPending}
         dyeingHouseSuggestions={dyeingHouseNames}
+        holidays={holidays}
         onClose={() => setFormOpen(false)}
         onSave={(v) => createM.mutate(v)}
       />

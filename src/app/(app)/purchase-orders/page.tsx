@@ -1,9 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
+import { PO_COLUMNS } from "@/lib/columns";
 import { PurchaseOrdersClient } from "@/components/purchase-orders/PurchaseOrdersClient";
 import type { Profile, PurchaseOrder } from "@/lib/types";
-
-const PO_COLUMNS =
-  "id, unique_id, vendor_name, process, quality, order_date, order_no, po_no, delivery_days, quantity, rate, amount, created_at, updated_at, sourcing_path, quality_name, selling_merchant_no, vendor_design_no, sampling_status, cad_ref, handloom_ref, direct_subtype";
 
 export default async function PurchaseOrdersPage() {
   const supabase = await createClient();

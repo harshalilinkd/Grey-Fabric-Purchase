@@ -8,11 +8,15 @@ import { usePagePrimaryAction, usePageSearchInput } from "@/components/experienc
 import { ManageShipmentsModal } from "./ManageShipmentsModal";
 import { fetchPurchaseOrders } from "@/lib/purchase-orders";
 import { isFinishedGoodsPo } from "@/lib/po-meta";
-import { fetchAllShipments } from "@/lib/shipments";
+import { fetchAllGreyInstalments, fetchAllShipments } from "@/lib/shipments";
 import { addCalendarDays, fmtDate, fmtNum } from "@/lib/format";
 import type { PurchaseOrder, Shipment } from "@/lib/types";
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
+
+/** Stage status, spelled exactly as the business reads it on this screen. */
+const STATUS_PENDING = "Pending";
+const STATUS_SENT = "Ordered Qty Sent for Dyeing";
 
 /** Expected grey-arrival ISO date = order_date + delivery_days (for the overdue flag). */
 function expectedGreyISO(order_date: string | null, delivery_days: number | null): string | null {
@@ -34,9 +38,11 @@ export function GreyHouseClient({
 }) {
   const { data: pos = [], isFetching: posFetching } = useQuery({ queryKey: ["purchase_orders"], queryFn: fetchPurchaseOrders, initialData: initialPos });
   const { data: shipments = [], isFetching: shipFetching } = useQuery({ queryKey: ["shipments_all"], queryFn: fetchAllShipments, initialData: initialShipments });
+  const { data: instalments = [] } = useQuery({ queryKey: ["grey_instalments"], queryFn: fetchAllGreyInstalments });
   const isFetching = posFetching || shipFetching;
 
   const [search, setSearch] = useState("");
+  const [view, setView] = useState<"all" | "pending" | "sent">("all");
   const [managePo, setManagePo] = useState<PurchaseOrder | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
 
@@ -53,6 +59,17 @@ export function GreyHouseClient({
     return m;
   }, [shipments]);
 
+  // Latest next-follow-up date per PO (from the instalment log) — the column staff chase.
+  const nextFollowupMap = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const i of instalments) {
+      const d = i.next_followup_date;
+      if (!d) continue;
+      if (!m[i.po_unique_id] || d > m[i.po_unique_id]) m[i.po_unique_id] = d;
+    }
+    return m;
+  }, [instalments]);
+
   const rows = useMemo(() => {
     const q = search.trim().toLowerCase();
     // Finished-goods paths (direct purchase / imported) skip grey-house + dyeing —
@@ -66,9 +83,14 @@ export function GreyHouseClient({
       const plannedISO = expectedGreyISO(p.order_date, p.delivery_days);
       const overdue = pending > 0 && !!plannedISO && plannedISO <= today;
       const pct = ordered > 0 ? Math.max(0, Math.min(100, (sent / ordered) * 100)) : sent > 0 ? 100 : 0;
-      return { po: p, ordered, sent, pending, overdue, pct };
+      // Exit condition: sentToDate ≥ PO quantity flips the stage status.
+      const sentForDyeing = ordered > 0 && sent >= ordered;
+      const nextFollowup = nextFollowupMap[p.unique_id] ?? null;
+      const followupDue = !sentForDyeing && !!nextFollowup && nextFollowup <= today;
+      return { po: p, ordered, sent, pending, overdue, pct, sentForDyeing, nextFollowup, followupDue };
     });
-    if (q) list = list.filter((r) => [r.po.po_no, r.po.vendor_name, r.po.process].some((f) => (f ?? "").toLowerCase().includes(q)));
+    if (view !== "all") list = list.filter((r) => (view === "sent" ? r.sentForDyeing : !r.sentForDyeing));
+    if (q) list = list.filter((r) => [r.po.po_no, r.po.vendor_name, r.po.process, r.po.dying_house_name].some((f) => (f ?? "").toLowerCase().includes(q)));
     // overdue first, then soonest planned date (overdue rows surface to the top)
     return list.sort((a, b) => {
       if (a.overdue !== b.overdue) return a.overdue ? -1 : 1;
@@ -76,7 +98,13 @@ export function GreyHouseClient({
       const bd = expectedGreyISO(b.po.order_date, b.po.delivery_days) ?? "9999-99-99";
       return ad.localeCompare(bd);
     });
-  }, [pos, search, sentMap, today]);
+  }, [pos, search, sentMap, today, view, nextFollowupMap]);
+
+  const counts = useMemo(() => {
+    const live = pos.filter((p) => !isFinishedGoodsPo(p));
+    const sent = live.filter((p) => (p.quantity ?? 0) > 0 && (sentMap[p.unique_id] ?? 0) >= (p.quantity ?? 0)).length;
+    return { all: live.length, pending: live.length - sent, sent };
+  }, [pos, sentMap]);
 
   return (
     <>
@@ -91,9 +119,20 @@ export function GreyHouseClient({
       </div>
 
       <div className="toolbar">
+        <div className="seg" role="group" aria-label="Filter by stage status">
+          {([
+            { key: "all", label: "All", n: counts.all },
+            { key: "pending", label: STATUS_PENDING, n: counts.pending },
+            { key: "sent", label: STATUS_SENT, n: counts.sent },
+          ] as const).map((s) => (
+            <button key={s.key} type="button" className={view === s.key ? "on" : ""} aria-pressed={view === s.key} onClick={() => setView(s.key)}>
+              {s.label}<span className="cnt">{s.n}</span>
+            </button>
+          ))}
+        </div>
         <div className="search">
           <Icon name="search" size={15} />
-          <input ref={searchRef} placeholder="Search PO no, vendor, process…" value={search} onChange={(e) => setSearch(e.target.value)} />
+          <input ref={searchRef} placeholder="Search PO no, vendor, process, dyeing house…" value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
         {isFetching && <span className="fetching">Updating…</span>}
       </div>
@@ -111,7 +150,9 @@ export function GreyHouseClient({
                   <th className="num">Sent Qty</th>
                   <th className="num">Pending Qty</th>
                   <th>Progress</th>
+                  <th>Status</th>
                   <th>Planned Date</th>
+                  <th>Next Follow-up</th>
                   <th className="col-actions">Actions</th>
                 </tr>
               </thead>
@@ -130,13 +171,25 @@ export function GreyHouseClient({
                       <div className="tbar"><div className="tbar-fill" style={{ width: `${r.pct}%` }} /></div>
                     </td>
                     <td>
+                      <span className={`pill ${r.sentForDyeing ? "success" : "warning"}`}>
+                        {r.sentForDyeing ? STATUS_SENT : STATUS_PENDING}
+                      </span>
+                    </td>
+                    <td>
                       {r.overdue
                         ? <span className="pill danger">Overdue · {addCalendarDays(r.po.order_date, r.po.delivery_days)}</span>
                         : <span className="dim">{addCalendarDays(r.po.order_date, r.po.delivery_days)}</span>}
                     </td>
+                    <td>
+                      {r.nextFollowup
+                        ? (r.followupDue
+                          ? <span className="pill danger">Due · {fmtDate(r.nextFollowup)}</span>
+                          : <span className="dim">{fmtDate(r.nextFollowup)}</span>)
+                        : <span className="dim">—</span>}
+                    </td>
                     <td className="col-actions">
                       <button className="act" onClick={() => setManagePo(r.po)}>
-                        <Icon name="truck" size={15} />Manage shipments
+                        <Icon name="truck" size={15} />Manage receipts
                       </button>
                     </td>
                   </tr>

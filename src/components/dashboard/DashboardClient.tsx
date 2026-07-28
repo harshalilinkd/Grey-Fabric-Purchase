@@ -8,6 +8,8 @@ import { Icon } from "@/components/ui/Icon";
 import { CountUp } from "@/components/ui/CountUp";
 import { useRegisterCommands } from "@/components/experience/CommandProvider";
 import { deriveDashboard, type DashboardSources } from "@/lib/dashboard";
+import { SLA } from "@/lib/sla";
+import { fetchHolidayDates } from "@/lib/masters";
 import { fetchPurchaseOrders } from "@/lib/purchase-orders";
 import { fetchAllShipments } from "@/lib/shipments";
 import { fetchProgramCards } from "@/lib/program-cards";
@@ -34,7 +36,7 @@ const DASH_NAV = [
 
 export function DashboardClient({
   initialPos, initialShipments, initialPrograms, initialQc, initialWarehouse,
-  initialReissues, initialFabric, initialFollowups, initialFinals,
+  initialReissues, initialFabric, initialFollowups, initialFinals, initialHolidays,
 }: {
   initialPos: PurchaseOrder[];
   initialShipments: Shipment[];
@@ -45,6 +47,7 @@ export function DashboardClient({
   initialFabric: FabricReceipt[];
   initialFollowups: DyeingFollowup[];
   initialFinals: FinalReceipt[];
+  initialHolidays: string[];
 }) {
   const router = useRouter();
 
@@ -57,6 +60,7 @@ export function DashboardClient({
   const fabQ = useQuery({ queryKey: ["fabric_receipts"], queryFn: fetchFabricReceipts, initialData: initialFabric });
   const dfQ = useQuery({ queryKey: ["dyeing_followups"], queryFn: fetchDyeingFollowups, initialData: initialFollowups });
   const finQ = useQuery({ queryKey: ["final_receipts"], queryFn: fetchFinalReceipts, initialData: initialFinals });
+  const holQ = useQuery({ queryKey: ["holidays"], queryFn: fetchHolidayDates, initialData: initialHolidays });
 
   useRegisterCommands(
     () => DASH_NAV.map((n) => ({ id: n.id, title: n.title, group: "Go to", icon: n.icon, run: () => router.push(n.href) })),
@@ -66,13 +70,15 @@ export function DashboardClient({
   const sources: DashboardSources = useMemo(() => ({
     pos: posQ.data ?? [], shipments: shipQ.data ?? [], programs: progQ.data ?? [], qc: qcQ.data ?? [],
     warehouse: whQ.data ?? [], reissues: rrQ.data ?? [], fabric: fabQ.data ?? [], followups: dfQ.data ?? [], finals: finQ.data ?? [],
-  }), [posQ.data, shipQ.data, progQ.data, qcQ.data, whQ.data, rrQ.data, fabQ.data, dfQ.data, finQ.data]);
+    holidays: holQ.data ?? [],
+  }), [posQ.data, shipQ.data, progQ.data, qcQ.data, whQ.data, rrQ.data, fabQ.data, dfQ.data, finQ.data, holQ.data]);
 
   const data = useMemo(() => deriveDashboard(sources), [sources]);
   const maxStage = Math.max(...data.funnel.map((f) => f.count), 1);
   const valueTotal = data.valueTotal || 1;
   const passPct = data.quality.passRate == null ? null : Math.round(data.quality.passRate * 100);
   const attnTotal = data.attention.reduce((a, b) => a + b.count, 0);
+  const slaOpenTotal = data.sla.reduce((a, r) => a + r.openLate, 0);
 
   // Slide-in only genuinely-new activity items.
   const seen = useRef<Set<string>>(new Set());
@@ -242,6 +248,41 @@ export function DashboardClient({
               </Link>
             )) : <p className="muted-note" style={{ padding: "8px 0" }}>No activity yet — receipts, programs, QC and stores appear here live.</p>}
           </div>
+        </div>
+      </div>
+
+      {/* SLA standing — an overlay measured against the stage targets in `lib/sla.ts`.
+          It does NOT drive any planned date shown elsewhere: those still come from each
+          record's own delivery_days. Two independent yardsticks, deliberately not merged. */}
+      <div className="panel">
+        <div className="panel-head">
+          <h3>SLA standing</h3>
+          <span className="tag">{slaOpenTotal > 0 ? `${slaOpenTotal} past target` : "All stages on target"}</span>
+        </div>
+        <div className="panel-body">
+          <div className="sla-grid">
+            {data.sla.map((r) => (
+              <Link
+                key={r.stage}
+                href={r.href}
+                className={`sla-cell${r.openLate > 0 ? " late" : ""}`}
+                title={`Stage ${r.stage} · target ${r.days} working day${r.days === 1 ? "" : "s"} from ${SLA[r.stage].clockStarts}`}
+              >
+                <span className="sla-stage">{r.reissue ? `${r.stage} · reissue` : `Stage ${r.stage}`}</span>
+                <span className="sla-label">{r.label}</span>
+                <span className="sla-val">
+                  {r.openLate > 0
+                    ? <><b>{r.openLate}</b> late<small> · worst {r.worstDays}d</small></>
+                    : <b className="ok">On target</b>}
+                </span>
+                {r.doneLate > 0 && <span className="sla-hist">{r.doneLate} finished late</span>}
+              </Link>
+            ))}
+          </div>
+          <p className="muted-note" style={{ marginTop: 10 }}>
+            Working days — Sunday and the holidays master are skipped. Measured against the stage
+            targets, separately from each order&apos;s own delivery days.
+          </p>
         </div>
       </div>
       </div>

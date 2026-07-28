@@ -9,8 +9,11 @@ import { QcWizardModal, type QcProgramOption } from "./QcWizardModal";
 import { fetchQcInspections, submitQcInspection } from "@/lib/qc-inspection";
 import { fetchProgramCards } from "@/lib/program-cards";
 import { fetchPurchaseOrders } from "@/lib/purchase-orders";
+import { fetchFabricReceipts } from "@/lib/fabric-receipts";
+import { CYCLE_ORIGINAL, CYCLE_REISSUE, CYCLE_LABEL, isReissue, ofCycle } from "@/lib/cycle";
 import { fmtDate, fmtNum } from "@/lib/format";
-import type { ProgramCard, PurchaseOrder, QcInspection, QcSubmitInput } from "@/lib/types";
+import { QC_OKAY, QC_REISSUE, QC_SHORT, isOkayStatus, remainingForQc } from "@/lib/qc-status";
+import type { ProgramCard, PurchaseOrder, QcInspection, QcResult, QcSubmitInput } from "@/lib/types";
 
 export function QcInspectionClient({
   initialInspections,
@@ -39,9 +42,11 @@ export function QcInspectionClient({
     queryFn: fetchPurchaseOrders,
     initialData: initialPos,
   });
+  // Stage 7 receipts set the reissue leg's QC target.
+  const { data: receipts = [] } = useQuery({ queryKey: ["fabric_receipts"], queryFn: fetchFabricReceipts });
 
   const [search, setSearch] = useState("");
-  const [view, setView] = useState<"all" | "Passed" | "Failed">("all");
+  const [view, setView] = useState<"all" | QcResult>("all");
   const [wizardOpen, setWizardOpen] = useState(false);
 
   const searchRef = useRef<HTMLInputElement | null>(null);
@@ -54,39 +59,60 @@ export function QcInspectionClient({
     return m;
   }, [pos]);
 
-  // Programs already inspected disappear from the picker (and their lots from Dyeing Queue /
-  // Program Cards). Keyed by program_uid (always present + unique) AND lot_no, so a program
-  // with a null lot_no can't be re-inspected.
-  const inspected = useMemo(() => {
-    const uids = new Set<string>();
-    const lots = new Set<string>();
+  /* QC is incremental: a lot is NOT finished after one inspection. Metres accounted for
+     per lot = Σ (good + reissue) across its rows, and the lot stays available until
+     remainingForQC hits zero. Keyed by lot_no, because several inspection events over
+     weeks all belong to the same lot. */
+  /* Scoped by (lot, cycle): the two tracks run concurrently on the same lot, so mixing
+     them would close the original lot when the reissue loop finishes. */
+  const accountedByLotCycle = useMemo(() => {
+    const m: Record<string, number> = {};
     for (const r of inspections) {
-      if (r.program_uid) uids.add(r.program_uid);
-      if (r.lot_no) lots.add(r.lot_no);
+      if (!r.lot_no) continue;
+      const k = `${r.lot_no}||${r.cycle ?? CYCLE_ORIGINAL}`;
+      m[k] = (m[k] ?? 0) + (r.passed_qty ?? 0) + (r.failed_qty ?? 0);
     }
-    return { uids, lots };
+    return m;
   }, [inspections]);
+
+  /** The reissue leg's target: metres that came back at Stage 7. */
+  const reissueReceivedByLot = useMemo(() => {
+    const m: Record<string, number> = {};
+    for (const r of ofCycle(receipts, CYCLE_REISSUE)) {
+      if (r.lot_no) m[r.lot_no] = (m[r.lot_no] ?? 0) + (r.received_meters ?? 0);
+    }
+    return m;
+  }, [receipts]);
 
   const availablePrograms = useMemo<QcProgramOption[]>(
     () =>
       programs
-        .filter((c) => !inspected.uids.has(c.program_uid) && !(c.lot_no && inspected.lots.has(c.lot_no)))
         .map((c) => {
           const po = poByUid[c.po_unique_id];
+          const lot = c.lot_no;
+          const origTarget = c.total_meters ?? 0;
+          const origDone = lot ? accountedByLotCycle[`${lot}||${CYCLE_ORIGINAL}`] ?? 0 : 0;
+          const reTarget = lot ? reissueReceivedByLot[lot] ?? 0 : 0;
+          const reDone = lot ? accountedByLotCycle[`${lot}||${CYCLE_REISSUE}`] ?? 0 : 0;
           return {
             id: c.id,
             program_uid: c.program_uid,
-            lot_no: c.lot_no,
+            lot_no: lot,
             po_unique_id: c.po_unique_id,
             po_no: po?.po_no ?? null,
             vendor: po?.vendor_name ?? null,
+            remainingForQc: remainingForQc(origTarget, origDone, 0),
+            remainingForReissueQc: remainingForQc(reTarget, reDone, 0),
           };
-        }),
-    [programs, inspected, poByUid],
+        })
+        // Offered if EITHER leg still has metres to account for; the wizard filters to
+        // the leg being inspected.
+        .filter((o) => o.remainingForQc > 0 || o.remainingForReissueQc > 0),
+    [programs, accountedByLotCycle, reissueReceivedByLot, poByUid],
   );
 
-  const passedCount = useMemo(() => inspections.filter((r) => r.overall_status === "Passed").length, [inspections]);
-  const failedCount = inspections.length - passedCount;
+  const okayCount = useMemo(() => inspections.filter((r) => isOkayStatus(r.overall_status)).length, [inspections]);
+  const reissueCount = inspections.length - okayCount;
 
   const rows = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -119,7 +145,7 @@ export function QcInspectionClient({
       <div className="page-head row">
         <div>
           <h1>QC Inspection</h1>
-          <p>Quality check on dyed fabric returns — pass to the warehouse or fail to reissue</p>
+          <p>Incremental quality check — a lot closes only when nothing remains for QC</p>
         </div>
         <button className="btn btn-primary" onClick={() => setWizardOpen(true)}>
           <Icon name="checkCircle" />Start QC
@@ -131,11 +157,11 @@ export function QcInspectionClient({
           <button className={view === "all" ? "on" : ""} aria-pressed={view === "all"} onClick={() => setView("all")}>
             All <span className="cnt mono">{inspections.length}</span>
           </button>
-          <button className={view === "Passed" ? "on" : ""} aria-pressed={view === "Passed"} onClick={() => setView("Passed")}>
-            Passed <span className="cnt mono">{passedCount}</span>
+          <button className={view === QC_OKAY ? "on" : ""} aria-pressed={view === QC_OKAY} onClick={() => setView(QC_OKAY)}>
+            {QC_OKAY} <span className="cnt mono">{okayCount}</span>
           </button>
-          <button className={view === "Failed" ? "on" : ""} aria-pressed={view === "Failed"} onClick={() => setView("Failed")}>
-            Failed <span className="cnt mono">{failedCount}</span>
+          <button className={view === QC_REISSUE ? "on" : ""} aria-pressed={view === QC_REISSUE} onClick={() => setView(QC_REISSUE)}>
+            {QC_REISSUE} <span className="cnt mono">{reissueCount}</span>
           </button>
         </div>
         <div className="search">
@@ -155,9 +181,12 @@ export function QcInspectionClient({
                   <th>Program</th>
                   <th>Lot</th>
                   <th>Design</th>
-                  <th className="num">Passed Qty</th>
-                  <th className="num">Failed Qty</th>
-                  <th>Result</th>
+                  <th>Track</th>
+                  <th>Actually found</th>
+                  <th className="num">Good Qty</th>
+                  <th className="num">Reissue Qty</th>
+                  <th>Status</th>
+                  <th>Remark</th>
                 </tr>
               </thead>
               <tbody>
@@ -167,13 +196,33 @@ export function QcInspectionClient({
                     <td><span className="strong mono">{r.program_uid ?? "—"}</span></td>
                     <td><span className="mono">{r.lot_no ?? "—"}</span></td>
                     <td><span className="mono">{r.design_no ?? "—"}</span></td>
+                    <td>
+                      <span className={`pill ${isReissue(r.cycle) ? "brand" : "plain"}`}>
+                        {CYCLE_LABEL[r.cycle ?? CYCLE_ORIGINAL]}
+                      </span>
+                    </td>
+                    <td>
+                      {r.actual_design_no || r.actual_color || r.actual_qty != null ? (
+                        <span className="dim">
+                          <span className="mono">{r.actual_design_no ?? "—"}</span>
+                          {r.actual_color ? ` · ${r.actual_color}` : ""}
+                          {r.actual_qty != null ? ` · ${fmtNum(r.actual_qty)} m` : ""}
+                        </span>
+                      ) : (
+                        <span className="dim">—</span>
+                      )}
+                    </td>
                     <td className="num mono">{fmtNum(r.passed_qty)}</td>
                     <td className="num mono">{fmtNum(r.failed_qty)}</td>
                     <td>
-                      <span className={`pill ${r.overall_status === "Passed" ? "success" : "danger"}`}>
-                        {r.overall_status ?? "—"}
+                      <span
+                        className={`pill ${isOkayStatus(r.overall_status) ? "success" : "danger"}`}
+                        title={r.overall_status ?? undefined}
+                      >
+                        {QC_SHORT[r.overall_status ?? ""] ?? r.overall_status ?? "—"}
                       </span>
                     </td>
+                    <td><span className="dim">{r.remark ?? "—"}</span></td>
                   </tr>
                 ))}
               </tbody>

@@ -18,6 +18,7 @@ const LiveContext = createContext<LiveStatus>("connecting");
 const TABLE_KEYS: Record<string, readonly unknown[][]> = {
   purchase_orders: [["purchase_orders"]],
   shipments: [["shipments_all"], ["po-shipments"]],
+  grey_instalments: [["grey_instalments"], ["po-instalments"]],
   program_cards: [["program_cards"], ["program_card_lots"], ["po-programs"]],
   program_card_designs: [["program-card-designs"]],
   qc_checklist: [["qc_inspections"], ["qc_lots"]],

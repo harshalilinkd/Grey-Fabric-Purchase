@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/client";
 import type { WarehouseLog } from "@/lib/types";
 
-const WH_COLUMNS = "id, store_id, po_unique_id, lot_no, design_no, color, passed_qty, stored_date, status, created_at";
+const WH_COLUMNS = "id, store_id, po_unique_id, lot_no, design_no, color, passed_qty, stored_date, status, remark, cycle, created_at";
 
 /**
  * The Ready-Goods ledger: every warehouse_log row (one per QC-passed design), newest

@@ -5,8 +5,7 @@ import type { ProgramCard, ProgramCardDesign, ProgramCardFormValues } from "@/li
 /** Public Storage bucket holding the program-card PDF colour cuttings (migration 005). */
 export const CUTTING_BUCKET = "program-cuttings";
 
-const PC_COLUMNS =
-  "id, program_uid, lot_no, po_unique_id, program_date, dying_house_name, total_meters, color, color_cutting_attached, total_color_cutting, delivery_days, pdf_url, created_at";
+import { PC_COLUMNS } from "@/lib/columns";
 
 const numOrNull = (s: string): number | null => {
   const t = (s ?? "").trim();

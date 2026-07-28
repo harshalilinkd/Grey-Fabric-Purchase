@@ -1,4 +1,8 @@
 import { fmtAmount, fmtDate, fmtNum } from "@/lib/format";
+import { QC_REISSUE, QC_SHORT, isOkayStatus } from "@/lib/qc-status";
+import { CYCLE_REISSUE } from "@/lib/cycle";
+import { isFinishedGoodsPo } from "@/lib/po-meta";
+import { SLA, plannedFor, timeDelay, type SlaStage } from "@/lib/sla";
 import type {
   DyeingFollowup,
   FabricReceipt,
@@ -45,6 +49,30 @@ export type ActivityItem = {
   id: string; icon: string; tone: string; lead: string; rest: string; time: string; href: string; createdAt: string;
 };
 
+/**
+ * One stage's SLA standing (`lib/sla.ts`).
+ *
+ * This is an OVERLAY and changes nothing else on the dashboard: the planned dates and
+ * overdue flags shown elsewhere still come from each record's own `delivery_days`, which is
+ * what was negotiated for that order. The SLA target is the internal standard for the
+ * stage — a second, independent yardstick. The two are deliberately not merged.
+ */
+export type SlaStageRow = {
+  stage: SlaStage;
+  label: string;
+  /** Target in working days, for the tooltip. */
+  days: number;
+  href: string;
+  /** Still open and already past target — the actionable number. */
+  openLate: number;
+  /** Completed, but later than target — history, not a to-do. */
+  doneLate: number;
+  /** Worst working-days late among the open ones. */
+  worstDays: number;
+  /** True for the reissue leg (stages 6–9), so the UI can group them. */
+  reissue: boolean;
+};
+
 export type DashboardSources = {
   pos: PurchaseOrder[];
   shipments: Shipment[];
@@ -55,6 +83,8 @@ export type DashboardSources = {
   fabric: FabricReceipt[];
   followups: DyeingFollowup[];
   finals: FinalReceipt[];
+  /** Non-working days from the holidays master; Sunday is skipped regardless. */
+  holidays: string[];
 };
 
 export type DashboardData = {
@@ -68,7 +98,50 @@ export type DashboardData = {
   intake: { bars: SparkBar[]; max: number; total: number; monthDeltaPct: number | null };
   followupsDue: FollowupItem[];
   activity: ActivityItem[];
+  sla: SlaStageRow[];
 };
+
+/** Earliest non-null date per key — every SLA clock starts or stops at a stage's FIRST event. */
+function earliestBy<T>(
+  rows: T[],
+  key: (r: T) => string | null | undefined,
+  date: (r: T) => string | null | undefined,
+): Record<string, string> {
+  const m: Record<string, string> = {};
+  for (const r of rows) {
+    const k = key(r);
+    const d = date(r)?.slice(0, 10);
+    if (!k || !d) continue;
+    if (!m[k] || d < m[k]) m[k] = d;
+  }
+  return m;
+}
+
+/** Roll a stage's (clock-start, actual) pairs into one standing. */
+function stageStanding(
+  stage: SlaStage,
+  href: string,
+  units: { clock: string | null | undefined; actual: string | null | undefined }[],
+  today: string,
+  holidays: Set<string>,
+): SlaStageRow {
+  let openLate = 0;
+  let doneLate = 0;
+  let worstDays = 0;
+  for (const u of units) {
+    // No clock start = the stage hasn't begun; there is nothing to be late against.
+    const planned = plannedFor(stage, u.clock ?? null, holidays);
+    const delay = timeDelay(planned, u.actual ?? null, today, holidays);
+    if (!delay) continue;
+    if (delay.open) {
+      openLate += 1;
+      worstDays = Math.max(worstDays, delay.days);
+    } else {
+      doneLate += 1;
+    }
+  }
+  return { stage, label: SLA[stage].label, days: SLA[stage].days, href, openLate, doneLate, worstDays, reissue: stage >= 6 };
+}
 
 const lotSet = (rows: { lot_no: string | null }[]) => new Set(rows.map((r) => r.lot_no).filter((x): x is string => !!x));
 
@@ -188,8 +261,8 @@ export function deriveDashboard(s: DashboardSources): DashboardData {
   // ---- QC quality ----
   const passedMetres = s.qc.reduce((sum, q) => sum + (q.passed_qty ?? 0), 0);
   const failedMetres = s.qc.reduce((sum, q) => sum + (q.failed_qty ?? 0), 0);
-  const passedCount = s.qc.filter((q) => q.overall_status === "Passed").length;
-  const failedCount = s.qc.filter((q) => q.overall_status === "Failed").length;
+  const passedCount = s.qc.filter((q) => isOkayStatus(q.overall_status)).length;
+  const failedCount = s.qc.filter((q) => q.overall_status === QC_REISSUE).length;
   const qcTotal = passedMetres + failedMetres;
   const quality = {
     passRate: qcTotal > 0 ? passedMetres / qcTotal : null,
@@ -226,7 +299,7 @@ export function deriveDashboard(s: DashboardSources): DashboardData {
   const overShip = s.pos.filter((p) => (p.quantity ?? 0) > 0 && (sentByPo[p.unique_id] ?? 0) > (p.quantity ?? 0)).length;
   const attentionAll: AttentionItem[] = [
     { id: "a-grey", icon: "box", tone: "bad", label: "Grey overdue · past planned date", count: overdueGrey, href: "/grey-receipts", to: "Grey House" },
-    { id: "a-dye", icon: "clock", tone: "bad", label: "Dyeing follow-ups overdue", count: overdueDyeing, href: "/dyeing-follow-up", to: "Dyeing Follow Up" },
+    { id: "a-dye", icon: "clock", tone: "bad", label: "Dispatch follow-ups overdue", count: overdueDyeing, href: "/dyeing-follow-up", to: "Dyeing House Follow Up (Sent)" },
     { id: "a-age", icon: "lines", tone: "warn", label: "Lots in dyeing over 7 days", count: agingCount, href: "/dyeing-queue", to: "Dyeing Queue" },
     { id: "a-qc", icon: "checkCircle", tone: "warn", label: "Lots awaiting QC", count: pendingQc, href: "/qc-inspection", to: "QC Inspection" },
     { id: "a-reissue", icon: "refresh", tone: "warn", label: "Reissues pending", count: reissuePending, href: "/reissue-return", to: "Reissue & Return" },
@@ -273,15 +346,73 @@ export function deriveDashboard(s: DashboardSources): DashboardData {
   const activity: ActivityItem[] = [];
   for (const sh of s.shipments) activity.push({ id: `ship-${sh.id}`, icon: "box", tone: "info", lead: `Lot ${sh.lot_no ?? "—"}`, rest: `· ${fmtNum(sh.sent_quantity)} m grey received`, createdAt: sh.created_at ?? "", time: "", href: "/grey-receipts" });
   for (const p of s.programs) activity.push({ id: `prog-${p.id}`, icon: "card", tone: "accent", lead: p.program_uid, rest: `· Lot ${p.lot_no ?? "—"} · ${p.dying_house_name ?? "dyeing"}`, createdAt: p.created_at ?? "", time: "", href: "/dyeing-queue" });
-  for (const q of s.qc) activity.push({ id: `qc-${q.id}`, icon: "checkCircle", tone: q.overall_status === "Passed" ? "ok" : "bad", lead: `QC ${q.overall_status ?? "—"}`, rest: `· Lot ${q.lot_no ?? "—"} · ${q.design_no ?? "—"}`, createdAt: q.created_at ?? "", time: "", href: "/qc-inspection" });
+  for (const q of s.qc) activity.push({ id: `qc-${q.id}`, icon: "checkCircle", tone: isOkayStatus(q.overall_status) ? "ok" : "bad", lead: `QC ${QC_SHORT[q.overall_status ?? ""] ?? q.overall_status ?? "—"}`, rest: `· Lot ${q.lot_no ?? "—"} · ${q.design_no ?? "—"}`, createdAt: q.created_at ?? "", time: "", href: "/qc-inspection" });
   for (const w of s.warehouse) activity.push({ id: `wh-${w.id}`, icon: "warehouse", tone: "ok", lead: `Stored Lot ${w.lot_no ?? "—"}`, rest: `· ${w.design_no ?? "—"} · ${fmtNum(w.passed_qty)} m`, createdAt: w.created_at ?? "", time: "", href: "/warehouse" });
   for (const f of s.finals) activity.push({ id: `fin-${f.id}`, icon: "clipboardCheck", tone: "ok", lead: `Closed Lot ${f.lot_no ?? "—"}`, rest: `· ${fmtNum(f.final_qty)} m final`, createdAt: f.created_at ?? "", time: "", href: "/final-receipts" });
   activity.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const activityTop = activity.slice(0, 12).map((a) => ({ ...a, time: a.createdAt.slice(0, 10) === today ? "Today" : fmtDate(a.createdAt) }));
 
+  /* ---- SLA standing per stage (overlay — see SlaStageRow) ----
+     Every clock runs on the FIRST event of its stage, so each map below is an earliest-date
+     lookup. Stages 7/8/9 are the same three steps as 3/4/5 filtered to the reissue cycle;
+     mixing the cycles here would make a lot look on-time because its *other* track moved. */
+  const holidaySet = new Set(s.holidays);
+  const isReissueRow = (r: { cycle?: string | null }) => r.cycle === CYCLE_REISSUE;
+  const isOriginalRow = (r: { cycle?: string | null }) => !isReissueRow(r);
+
+  const firstShipByPo = earliestBy(s.shipments, (r) => r.po_unique_id, (r) => r.shipment_date);
+  const progByLot = earliestBy(s.programs, (r) => r.lot_no, (r) => r.program_date);
+
+  const fabOrig = s.fabric.filter(isOriginalRow);
+  const fabReis = s.fabric.filter(isReissueRow);
+  const qcOrig = s.qc.filter(isOriginalRow);
+  const qcReis = s.qc.filter(isReissueRow);
+  const whOrig = s.warehouse.filter(isOriginalRow);
+  const whReis = s.warehouse.filter(isReissueRow);
+
+  const fabOrigByLot = earliestBy(fabOrig, (r) => r.lot_no, (r) => r.received_date);
+  const qcOrigByLot = earliestBy(qcOrig, (r) => r.lot_no, (r) => r.checked_date);
+  const whOrigByLot = earliestBy(whOrig, (r) => r.lot_no, (r) => r.stored_date);
+  const fabReisByLot = earliestBy(fabReis, (r) => r.lot_no, (r) => r.received_date);
+  const qcReisByLot = earliestBy(qcReis, (r) => r.lot_no, (r) => r.checked_date);
+  const whReisByLot = earliestBy(whReis, (r) => r.lot_no, (r) => r.stored_date);
+
+  // Stage 6 is PO-grain (one parcel bundles several lots), so its clock and actual are too.
+  const reissueRaisedByPo = earliestBy(s.reissues, (r) => r.original_po_unique_id, (r) => r.reissue_date);
+  const dispatchByPo = earliestBy(s.followups.filter(isReissueRow), (r) => r.po_unique_id, (r) => r.created_at);
+  // Stages 7–9 are lot-grain, but their clock starts at the PO-grain dispatch above.
+  const reissueLots = new Set(s.reissues.map((r) => r.original_lot_no).filter((x): x is string => !!x));
+  const poOfReissueLot: Record<string, string> = {};
+  for (const r of s.reissues) if (r.original_lot_no && r.original_po_unique_id) poOfReissueLot[r.original_lot_no] ??= r.original_po_unique_id;
+
+  const programLots = [...new Set(s.programs.map((p) => p.lot_no).filter((x): x is string => !!x))];
+
+  const sla: SlaStageRow[] = [
+    // Grey: only POs that actually expect grey — finished goods never see this stage.
+    stageStanding(2, "/grey-receipts",
+      s.pos.filter((p) => !isFinishedGoodsPo(p)).map((p) => ({ clock: p.order_date, actual: firstShipByPo[p.unique_id] })),
+      today, holidaySet),
+    stageStanding(3, "/fabric-receipts",
+      programLots.map((l) => ({ clock: progByLot[l], actual: fabOrigByLot[l] })), today, holidaySet),
+    stageStanding(4, "/qc-inspection",
+      programLots.map((l) => ({ clock: fabOrigByLot[l], actual: qcOrigByLot[l] })), today, holidaySet),
+    stageStanding(5, "/warehouse",
+      programLots.map((l) => ({ clock: qcOrigByLot[l], actual: whOrigByLot[l] })), today, holidaySet),
+    stageStanding(6, "/dyeing-follow-up",
+      Object.keys(reissueRaisedByPo).map((uid) => ({ clock: reissueRaisedByPo[uid], actual: dispatchByPo[uid] })),
+      today, holidaySet),
+    stageStanding(7, "/fabric-receipts",
+      [...reissueLots].map((l) => ({ clock: dispatchByPo[poOfReissueLot[l]], actual: fabReisByLot[l] })), today, holidaySet),
+    stageStanding(8, "/qc-inspection",
+      [...reissueLots].map((l) => ({ clock: fabReisByLot[l], actual: qcReisByLot[l] })), today, holidaySet),
+    stageStanding(9, "/warehouse",
+      [...reissueLots].map((l) => ({ clock: qcReisByLot[l], actual: whReisByLot[l] })), today, holidaySet),
+  ];
+
   return {
     kpis, valueFlow, valueTotal, funnel, quality, throughput, attention,
     intake: { bars, max: intakeMax, total: Math.round(intakeTotal), monthDeltaPct },
     followupsDue: followupsDue.slice(0, 6), activity: activityTop,
+    sla,
   };
 }

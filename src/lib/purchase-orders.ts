@@ -1,5 +1,7 @@
 import { createClient } from "@/lib/supabase/client";
-import { variantCode } from "@/lib/po-meta";
+import { isFinishedGoodsPath, variantCode } from "@/lib/po-meta";
+import { QC_OKAY, QC_REISSUE } from "@/lib/qc-status";
+import { WH_FINAL, WH_WAITING } from "@/lib/warehouse-status";
 import { round2 } from "@/lib/format";
 import type {
   PoArchiveResult,
@@ -13,8 +15,7 @@ import type {
   WarehouseLog,
 } from "@/lib/types";
 
-const PO_COLUMNS =
-  "id, unique_id, vendor_name, process, quality, order_date, order_no, po_no, delivery_days, quantity, rate, amount, created_at, updated_at, sourcing_path, quality_name, selling_merchant_no, vendor_design_no, sampling_status, cad_ref, handloom_ref, direct_subtype, checks_method, weaving_design";
+import { PO_COLUMNS } from "@/lib/columns";
 
 const numOrNull = (s: string): number | null => {
   const t = s.trim();
@@ -43,6 +44,8 @@ function toPayload(v: PoFormValues) {
   const path = v.sourcing_path || null;
   return {
     vendor_name: v.vendor_name.trim() || null,
+    // one PO → one dyeing house; finished goods never reach one, so it stays null there
+    dying_house_name: isFinishedGoodsPath(path) ? null : v.dying_house_name.trim() || null,
     process: v.process.trim() || null,
     quality: v.quality.trim() || null,
     order_date: v.order_date || null,
@@ -96,23 +99,35 @@ export async function fetchPurchaseOrders(): Promise<PurchaseOrder[]> {
   return (data ?? []) as PurchaseOrder[];
 }
 
+/**
+ * Create a PO and its colour breakdown.
+ *
+ * `unique_id` is the app-generated business ID. `amount` is a GENERATED column
+ * (quantity × rate) and is deliberately absent from the payload — the database owns that
+ * arithmetic so the ledger can't disagree with itself.
+ *
+ * The colour split is written straight after, via the service-role route handler
+ * (variant DELETE is admin-only under RLS, so a replace-all has to go server-side).
+ */
 export async function createPurchaseOrder(values: PoFormValues): Promise<PurchaseOrder> {
   const supabase = createClient();
   const unique_id = `UID-${Date.now()}`;
-  // Colours are split later (Program Card stage) — PO save no longer writes variants.
   const { data, error } = await supabase
     .from("purchase_orders")
     .insert({ unique_id, ...toPayload(values) })
     .select(PO_COLUMNS)
     .single();
   if (error) throw new Error(error.message);
-  return data as PurchaseOrder;
+  const po = data as PurchaseOrder;
+  await syncVariants(po.id, values.variants);
+  return po;
 }
 
 export async function updatePurchaseOrder(id: string, values: PoFormValues): Promise<void> {
   const supabase = createClient();
   const { error } = await supabase.from("purchase_orders").update(toPayload(values)).eq("id", id);
   if (error) throw new Error(error.message);
+  await syncVariants(id, values.variants);
 }
 
 /** Admin-only — goes through the privileged route handler so RLS + role are enforced. */
@@ -134,6 +149,7 @@ export async function restorePurchaseOrder(po: PurchaseOrder, variants: PoColorV
     .insert({
       unique_id: po.unique_id,
       vendor_name: po.vendor_name,
+      dying_house_name: po.dying_house_name,
       process: po.process,
       quality: po.quality,
       order_date: po.order_date,
@@ -258,6 +274,13 @@ export async function fetchPoStock(poUniqueId: string): Promise<WarehouseLog[]> 
 
 const rand6 = () => Math.floor(Math.random() * 1e6).toString();
 
+/** Metres already in the Ready-Goods ledger for a PO (finished-goods completion check). */
+async function sumStoredForPo(supabase: ReturnType<typeof createClient>, poUniqueId: string): Promise<number> {
+  const { data, error } = await supabase.from("warehouse_log").select("passed_qty").eq("po_unique_id", poUniqueId);
+  if (error) return 0;
+  return ((data ?? []) as { passed_qty: number | null }[]).reduce((s, w) => s + (w.passed_qty ?? 0), 0);
+}
+
 /** One inspected item on a finished-goods receipt. `passed` = QC verdict; on a fail,
  *  `failed_metres` (≤ metres) go to reissue and the rest are stored. */
 export type ReceiveQcLine = { design_no: string; color: string; metres: number; passed: boolean; failed_metres: number };
@@ -268,6 +291,8 @@ export type ReceiveQcInput = {
   checks: { meter_qty_check: boolean; colour_check: boolean; strength_check: boolean; fabric_quality_check: boolean };
   /** Applied to the failed designs. */
   reason: string;
+  /** The PO's ordered quantity — decides whether this receipt closes it (Stage-5 status). */
+  po_quantity?: number | null;
   /** A fail → "Reissue Pending" (send back) when true, else "Returned". */
   return_and_reissue: boolean;
   lines: ReceiveQcLine[];
@@ -294,17 +319,23 @@ export async function receiveAndQc(
   const norm = input.lines.map((ln) => {
     const failed = ln.passed ? 0 : round2(Math.min(Math.max(0, ln.failed_metres || 0), ln.metres));
     const passed = round2(Math.max(0, ln.metres - failed));
-    const status: "Passed" | "Failed" = failed > 0 ? "Failed" : "Passed";
     return {
       design_no: ln.design_no.trim() || null,
       color: ln.color.trim() || null,
       passed,
       failed,
-      status,
     };
   });
 
-  // 1) warehouse_log for the QC-passed metres
+  // 1) warehouse_log for the QC-passed metres.
+  //    Finished goods have no program card, so there is no remaining-for-QC to wait on:
+  //    the lot's terminal state follows the PO instead — once the metres stored against
+  //    it reach the ordered quantity, this receipt is the final one.
+  const alreadyStored = await sumStoredForPo(supabase, poUniqueId);
+  const passedNow = round2(norm.reduce((s, l) => s + l.passed, 0));
+  const ordered = input.po_quantity ?? 0;
+  const whStatus = ordered > 0 && round2(alreadyStored + passedNow) >= ordered ? WH_FINAL : WH_WAITING;
+
   let warehouse = 0;
   const whRows = norm
     .filter((l) => l.passed > 0)
@@ -316,7 +347,8 @@ export async function receiveAndQc(
       color: l.color,
       passed_qty: l.passed,
       stored_date: date,
-      status: "Stored",
+      status: whStatus,
+      remark: input.reason.trim() || null,
     }));
   if (whRows.length) {
     const { error } = await supabase.from("warehouse_log").insert(whRows);
@@ -346,21 +378,30 @@ export async function receiveAndQc(
     reissue = reRows.length;
   }
 
-  // 3) qc_checklist LAST (program_uid null — finished goods have no dyeing program)
-  const qcRows = norm.map((l, i) => ({
-    check_id: `QC-${stamp}${i}${rand6()}`,
+  // 3) qc_checklist LAST (program_uid null — finished goods have no dyeing program).
+  //    One row per disposition, same rule as the dyeing-lot QC writer: a row carries a
+  //    good qty OR a reissue qty, never both, so the status-filtered sums stay well-defined.
+  const qcBase = (l: (typeof norm)[number], i: number, suffix: string) => ({
+    check_id: `QC-${stamp}${i}${suffix}`,
     program_uid: null,
     lot_no: lot,
     design_no: l.design_no,
+    actual_color: l.color,
     checked_date: date,
     meter_qty_check: input.checks.meter_qty_check,
     colour_check: input.checks.colour_check,
     strength_check: input.checks.strength_check,
     fabric_quality_check: input.checks.fabric_quality_check,
-    overall_status: l.status,
-    passed_qty: l.passed,
-    failed_qty: l.failed,
-  }));
+  });
+  const qcRows: Record<string, unknown>[] = [];
+  norm.forEach((l, i) => {
+    if (l.passed > 0) {
+      qcRows.push({ ...qcBase(l, i, `g${rand6()}`), overall_status: QC_OKAY, passed_qty: l.passed, failed_qty: 0 });
+    }
+    if (l.failed > 0) {
+      qcRows.push({ ...qcBase(l, i, `r${rand6()}`), overall_status: QC_REISSUE, passed_qty: 0, failed_qty: l.failed, remark: reReason });
+    }
+  });
   const { error } = await supabase.from("qc_checklist").insert(qcRows);
   if (error) throw new Error(`Couldn't save the QC checklist: ${error.message}`);
 

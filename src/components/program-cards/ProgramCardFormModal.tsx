@@ -1,11 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ChangeEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Icon } from "@/components/ui/Icon";
-import { useToast } from "@/components/ui/Toast";
+import { fetchPoColorVariants } from "@/lib/purchase-orders";
 import { variantCode } from "@/lib/po-meta";
 import { fmtNum, round2 } from "@/lib/format";
+import { workingDaysLabel } from "@/lib/working-days";
 import { useEscClose } from "@/lib/use-esc-close";
+import { GRID_NAV_HINT_GROWS, useGridNav } from "@/lib/use-grid-nav";
 import type { ProgramCardDesignInput, ProgramCardFormValues } from "@/lib/types";
 
 /** A lot that has a shipment but no program card yet — offered in the lot dropdown. */
@@ -15,10 +18,19 @@ export type AvailableLot = {
   po_id: string | null;
   po_no: string | null;
   vendor: string | null;
+  /** The PO's dyeing house — one PO goes to one dyeing house, so the card inherits it. */
+  dying_house_name: string | null;
+  /** Metres in this lot (the shipment's sent quantity) — one PO can span several lots. */
+  lot_meters: number | null;
 };
 
-/** UI row: the design fields + a stable React key so uncontrolled file inputs don't desync on insert/remove. */
-type DesignRow = ProgramCardDesignInput & { _key: number };
+/** Card-level colour, exactly as the business writes it. */
+const COLOR_MULTIPLE = "Multiple";
+const COLOR_NONE = "-";
+
+/** UI row: the design fields + a stable React key so uncontrolled file inputs don't desync
+ *  on insert/remove, + the metres this colour was authorised for on the PO (placeholder only). */
+type DesignRow = ProgramCardDesignInput & { _key: number; poMeters?: number | null };
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 let rowSeq = 0;
@@ -35,6 +47,7 @@ export function ProgramCardFormModal({
   onClose,
   onSave,
   dyeingHouseSuggestions = [],
+  holidays = [],
 }: {
   open: boolean;
   availableLots: AvailableLot[];
@@ -43,14 +56,14 @@ export function ProgramCardFormModal({
   onClose: () => void;
   onSave: (values: ProgramCardFormValues) => void;
   dyeingHouseSuggestions?: string[];
+  /** Holiday dates (YYYY-MM-DD) — skipped when counting the dyeing lead time. */
+  holidays?: string[];
 }) {
-  const toast = useToast();
   const [vendor, setVendor] = useState("");
   const [lotNo, setLotNo] = useState("");
   const [dyeing, setDyeing] = useState("");
   const [programDate, setProgramDate] = useState(todayISO());
   const [totalMeters, setTotalMeters] = useState("");
-  const [baseColor, setBaseColor] = useState("");
   const [deliveryDays, setDeliveryDays] = useState("");
   const [cuttingAttached, setCuttingAttached] = useState("No");
   const [designs, setDesigns] = useState<DesignRow[]>([emptyDesign()]);
@@ -62,7 +75,6 @@ export function ProgramCardFormModal({
       setDyeing("");
       setProgramDate(todayISO());
       setTotalMeters("");
-      setBaseColor("");
       setDeliveryDays("");
       setCuttingAttached("No");
       setDesigns([emptyDesign()]);
@@ -93,10 +105,69 @@ export function ProgramCardFormModal({
     setLotNo(lot);
     const l = availableLots.find((x) => x.lot_no === lot);
     if (l?.vendor) setVendor(l.vendor); // keep the vendor field in sync with the chosen lot
+    // The dyeing house is fixed on the PO — inherit it, but leave it editable.
+    if (l?.dying_house_name) setDyeing(l.dying_house_name);
+    if (l?.lot_meters != null) setTotalMeters(String(l.lot_meters));
   };
 
+  /* The colours were authorised at PO time. Pull them through rather than making the
+     operator retype them — that double entry is where colour names drift, and a drifted
+     name is exactly the "mystery box" the PO breakdown exists to prevent. */
+  const variantsQ = useQuery({
+    queryKey: ["po-variants", selectedLot?.po_id],
+    queryFn: () => fetchPoColorVariants(selectedLot!.po_id!),
+    enabled: open && !!selectedLot?.po_id,
+  });
+
+  const seededFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!open) { seededFor.current = null; return; }
+    const key = selectedLot ? `${selectedLot.po_id}__${selectedLot.lot_no}` : null;
+    if (!key || !variantsQ.data?.length || seededFor.current === key) return;
+    seededFor.current = key;
+
+    const poTotal = round2(variantsQ.data.reduce((s, x) => s + (x.meters ?? 0), 0));
+    const lotMeters = selectedLot?.lot_meters ?? null;
+    /* Metres only carry across when this lot IS the whole PO. A PO is routinely split
+       across several lots, so copying the full breakdown into one lot would over-allocate
+       it. When they differ, the colours come through and the authorised figure shows as a
+       placeholder for the operator to distribute against. */
+    const sameScope = lotMeters != null && round2(lotMeters) === poTotal;
+
+    setDesigns(
+      variantsQ.data.map((x, i) => ({
+        _key: (rowSeq += 1),
+        design_no: x.code ?? variantCode(i),
+        color: x.color_name ?? "",
+        meter: sameScope && x.meters != null ? String(x.meters) : "",
+        poMeters: x.meters ?? null,
+        file: null,
+      })),
+    );
+    if (lotMeters == null) setTotalMeters(String(poTotal));
+  }, [open, selectedLot, variantsQ.data]);
+
   const cuttingTotal = useMemo(() => designs.reduce((s, d) => s + (Number(d.meter) || 0), 0), [designs]);
-  const filledCount = useMemo(() => designs.filter(hasContent).length, [designs]);
+  const filled = useMemo(() => designs.filter(hasContent), [designs]);
+  const filledCount = filled.length;
+
+  /** Card-level colour: the single colour name, "Multiple", or "-" when nothing is named. */
+  const derivedColor = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const d of designs) {
+      const name = d.color.trim();
+      if (name) seen.set(name.toLowerCase(), name);
+    }
+    if (seen.size === 0) return COLOR_NONE;
+    if (seen.size === 1) return [...seen.values()][0];
+    return COLOR_MULTIPLE;
+  }, [designs]);
+
+  const seededFromPo = designs.some((d) => d.poMeters != null);
+  const needsDistribution = seededFromPo && designs.every((d) => d.meter.trim() === "");
+
+  const holidaySet = useMemo(() => new Set(holidays), [holidays]);
+  const plannedReturn = workingDaysLabel(programDate, Number(deliveryDays) || null, holidaySet);
 
   if (!open) return null;
 
@@ -111,22 +182,45 @@ export function ProgramCardFormModal({
   const addRow = () => setDesigns((rows) => [...rows, emptyDesign()]);
   const removeRow = (i: number) => setDesigns((rows) => (rows.length > 1 ? rows.filter((_, idx) => idx !== i) : rows));
 
+  /* Spreadsheet keyboard nav — see `use-grid-nav.ts`. The ids below must stay in step with
+     the inputs' own ids. The cutting file input is deliberately left out: Enter on a file
+     picker should open it, not jump rows. */
+  type PcCell = "dno" | "dcol" | "dm";
+  const cellId = (field: PcCell, row: number) => `pc-${field}-${row}`;
+  const { onCellKeyDown } = useGridNav<PcCell>({ cellId, rowCount: designs.length, onAppendRow: addRow });
+
   const total = Number(totalMeters);
-  const balanced = total > 0 && round2(cuttingTotal) === round2(total);
-  const allocState = balanced ? "ok" : cuttingTotal > 0 && total > 0 ? "warn" : "";
+  const totalValid = totalMeters.trim() !== "" && Number.isFinite(total) && total > 0;
+  const balanced = totalValid && round2(cuttingTotal) === round2(total);
+  const allocState = balanced ? "ok" : cuttingTotal > 0 && totalValid ? "warn" : "";
+
+  /* Gate rules — the card cannot be created unless all of these hold:
+     · design-line metres sum EXACTLY to the card total
+     · every design line names a colour
+     · every non-White colour carries a cutting (White needs none) */
+  const missingColor = filled.filter((d) => d.color.trim() === "").length;
+  const missingCutting = filled.filter((d) => d.color.trim() !== "" && !isWhite(d.color) && !d.file).length;
+  const blockers: string[] = [];
+  if (!selectedLot) blockers.push("Select the lot this program is for.");
+  if (!dyeing.trim()) blockers.push("Pick the dyeing house.");
+  if (!totalValid) blockers.push("Enter the card's total metres.");
+  if (filledCount === 0) blockers.push("Add at least one design line.");
+  if (totalValid && filledCount > 0 && !balanced)
+    blockers.push(`Design metres must total exactly ${fmtNum(total)} m — currently ${fmtNum(cuttingTotal)} m.`);
+  if (missingColor > 0) blockers.push(`${missingColor} design line${missingColor === 1 ? "" : "s"} without a colour.`);
+  if (missingCutting > 0)
+    blockers.push(`${missingCutting} non-White colour${missingCutting === 1 ? "" : "s"} without a cutting.`);
+  const canSubmit = blockers.length === 0;
 
   const submit = () => {
-    if (!selectedLot) return;
-    if (total > 0 && cuttingTotal > 0 && round2(cuttingTotal) !== round2(total)) {
-      toast.warning(`Designs allocate ${fmtNum(cuttingTotal)} m vs ${fmtNum(total)} m total. Saved anyway.`);
-    }
+    if (!canSubmit || !selectedLot) return;
     onSave({
       lot_no: selectedLot.lot_no,
       po_unique_id: selectedLot.po_unique_id,
       dying_house_name: dyeing,
       program_date: programDate,
       total_meters: totalMeters,
-      color: baseColor,
+      color: derivedColor,
       delivery_days: deliveryDays,
       color_cutting_attached: cuttingAttached === "Yes",
       designs: designs.map((d) => ({ design_no: d.design_no, color: d.color, meter: d.meter, file: d.file })),
@@ -135,7 +229,7 @@ export function ProgramCardFormModal({
 
   return (
     <div className="overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="modal wide pcd-modal" role="dialog" aria-modal="true" aria-label="New program card">
+      <div className="modal wide" role="dialog" aria-modal="true" aria-label="New program card">
         <div className="modal-head">
           <div>
             <h3>New program card</h3>
@@ -189,7 +283,8 @@ export function ProgramCardFormModal({
               </div>
               <div className="field">
                 <label htmlFor="pc-color">Color</label>
-                <input id="pc-color" value={baseColor} onChange={(e) => setBaseColor(e.target.value)} placeholder="e.g., Royal Blue" />
+                <input id="pc-color" value={derivedColor} readOnly />
+                <span className="field-hint">Auto — &quot;{COLOR_MULTIPLE}&quot;, the single colour name, or &quot;{COLOR_NONE}&quot;</span>
               </div>
               <div className="field">
                 <label htmlFor="pc-meters">Meters</label>
@@ -214,6 +309,7 @@ export function ProgramCardFormModal({
               <div className="field">
                 <label htmlFor="pc-delivery">Delivery Days</label>
                 <input id="pc-delivery" type="number" value={deliveryDays} onChange={(e) => setDeliveryDays(e.target.value)} placeholder="e.g., 7" />
+                <span className="field-hint">Planned dyeing return: <b className="mono">{plannedReturn}</b> (working days)</span>
               </div>
             </div>
 
@@ -223,6 +319,14 @@ export function ProgramCardFormModal({
                 <h4>Design Details</h4>
                 <span className={`alloc ${allocState}`} role="status" aria-live="polite">{fmtNum(cuttingTotal)}{total > 0 ? ` of ${fmtNum(total)}` : ""} m allocated</span>
               </div>
+              {seededFromPo && (
+                <p className="muted-note" style={{ marginTop: -4 }}>
+                  Colours pulled from the PO&apos;s authorised breakdown.
+                  {needsDistribution
+                    ? " This lot is part of the PO, so enter the metres going to dyeing for each colour — the authorised figure is shown in each box."
+                    : ""}
+                </p>
+              )}
 
               <div className="pcd-rows">
                 {designs.map((d, i) => (
@@ -237,15 +341,23 @@ export function ProgramCardFormModal({
                     <div className="pcd-fields">
                       <div className="field">
                         <label htmlFor={`pc-dno-${i}`}>Design No.</label>
-                        <input id={`pc-dno-${i}`} value={d.design_no} onChange={setDesignNo(i)} placeholder="e.g., D-123" />
+                        <input id={cellId("dno", i)} value={d.design_no} onChange={setDesignNo(i)} onKeyDown={onCellKeyDown("dno", i)} placeholder="e.g., D-123" />
                       </div>
                       <div className="field">
                         <label htmlFor={`pc-dcol-${i}`}>Design Color</label>
-                        <input id={`pc-dcol-${i}`} value={d.color} onChange={setColor(i)} placeholder="e.g., Navy" />
+                        <input id={cellId("dcol", i)} value={d.color} onChange={setColor(i)} onKeyDown={onCellKeyDown("dcol", i)} placeholder="e.g., Navy" />
                       </div>
                       <div className="field">
                         <label htmlFor={`pc-dm-${i}`}>Design Meter</label>
-                        <input id={`pc-dm-${i}`} type="number" step="any" value={d.meter} onChange={setMeter(i)} placeholder="e.g., 50" />
+                        <input
+                          id={cellId("dm", i)}
+                          type="number"
+                          step="any"
+                          value={d.meter}
+                          onChange={setMeter(i)}
+                          onKeyDown={onCellKeyDown("dm", i)}
+                          placeholder={d.poMeters != null ? `PO authorised ${fmtNum(d.poMeters)}` : "e.g., 50"}
+                        />
                       </div>
                     </div>
 
@@ -254,7 +366,9 @@ export function ProgramCardFormModal({
                         <span className="white-note"><Icon name="check" size={13} />White needs no cutting</span>
                       ) : (
                         <>
-                          <span className="pcd-cut-label">Color cutting <span className="pcd-cut-opt">(optional)</span></span>
+                          <span className="pcd-cut-label">
+                            Color cutting {d.file ? <span className="pcd-cut-opt">(attached)</span> : <span className="pcd-cut-req">(required)</span>}
+                          </span>
                           <input type="file" accept="image/*,application/pdf" onChange={setFile(i)} aria-label={`Cutting for design row ${i + 1}`} />
                         </>
                       )}
@@ -269,15 +383,18 @@ export function ProgramCardFormModal({
             <button type="button" className="pcd-add" onClick={addRow}>
               <Icon name="plus" size={15} />Add design row
             </button>
+            <span className="field-hint">{GRID_NAV_HINT_GROWS}</span>
           </div>
 
           <div className="modal-foot">
             <span className="amt-preview">
-              {selectedLot ? <>PO <b className="mono">{selectedLot.po_no ?? selectedLot.po_unique_id}</b></> : "Select a lot to continue"}
+              {blockers.length > 0
+                ? <span className="pcd-blocker">{blockers[0]}</span>
+                : selectedLot ? <>PO <b className="mono">{selectedLot.po_no ?? selectedLot.po_unique_id}</b></> : null}
             </span>
             <div className="foot-actions">
               <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
-              <button type="submit" className="btn btn-primary" disabled={saving || !selectedLot}>
+              <button type="submit" className="btn btn-primary" disabled={saving || !canSubmit}>
                 {saving ? "Saving…" : "Create program"}
               </button>
             </div>

@@ -1,9 +1,12 @@
 "use client";
 
+import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Icon } from "@/components/ui/Icon";
 import { fetchProgramCardDesigns } from "@/lib/program-cards";
+import { fetchHolidayDates } from "@/lib/masters";
 import { fmtDate, fmtNum } from "@/lib/format";
+import { workingDaysLabel } from "@/lib/working-days";
 import { useEscClose } from "@/lib/use-esc-close";
 import type { ProgramCard, PurchaseOrder } from "@/lib/types";
 
@@ -20,6 +23,9 @@ export function ProgramCardDetailModal({
     queryKey: ["program-card-designs", card.id],
     queryFn: () => fetchProgramCardDesigns(card.id),
   });
+  // Lead time is counted in working days, so weekends + holidays push the return date out.
+  const { data: holidays = [] } = useQuery({ queryKey: ["holidays"], queryFn: fetchHolidayDates });
+  const holidaySet = useMemo(() => new Set(holidays), [holidays]);
 
   useEscClose(true, onClose);
 
@@ -45,6 +51,10 @@ export function ProgramCardDetailModal({
             <div className="sum-row"><span>Color</span><b>{card.color ?? "—"}</b></div>
             <div className="sum-row"><span>Total meters</span><b className="mono">{fmtNum(card.total_meters)} m</b></div>
             <div className="sum-row"><span>Delivery days</span><b className="mono">{card.delivery_days ?? "—"}</b></div>
+            <div className="sum-row">
+              <span>Planned dyeing return</span>
+              <b className="mono">{workingDaysLabel(card.program_date, card.delivery_days ?? null, holidaySet)}</b>
+            </div>
           </div>
 
           <div className="sum-title">Colour cuttings</div>

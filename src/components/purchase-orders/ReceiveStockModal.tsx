@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Icon } from "@/components/ui/Icon";
-import { SOURCING_LABEL } from "@/lib/po-meta";
+import { sourcingLabel } from "@/lib/po-meta";
 import { fmtNum } from "@/lib/format";
 import { useEscClose } from "@/lib/use-esc-close";
 import type { PurchaseOrder } from "@/lib/types";
@@ -116,7 +116,7 @@ export function ReceiveStockModal({
             <h3>Receive &amp; QC</h3>
             <p>
               PO <span className="mono">{po.po_no ?? po.unique_id}</span>
-              {po.sourcing_path ? ` · ${SOURCING_LABEL[po.sourcing_path] ?? po.sourcing_path}` : ""}
+              {po.sourcing_path ? ` · ${sourcingLabel(po.sourcing_path)}` : ""}
             </p>
           </div>
           <button className="close-x" onClick={onClose} aria-label="Close"><Icon name="x" /></button>

@@ -137,34 +137,122 @@ memory). Env vars (both browser-safe): `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_
     after 002 during the drift fix). Reload the PostgREST schema cache after applying.
   - `008` = `program_card_designs.cutting_url text` (NULLABLE) — per-colour cutting photo/PDF for the
     Program Cards white-swatch rule (White colours need no cutting). Files still go to the
-    `program-cuttings` bucket (005). **Pending — user runs it** (the new form fails on save without it:
-    "Could not find the 'cutting_url' column…"). Reload the schema cache after (`NOTIFY pgrst, 'reload schema';`).
+    `program-cuttings` bucket (005). **Applied.** Reload the schema cache after (`NOTIFY pgrst, 'reload schema';`).
   - `009` = **`final_receipts`** table (id, `receipt_id` "FR-{ts}", `lot_no`, `po_unique_id`, `final_qty`,
     `status` CHECK Closed/Partial/On Hold default Closed, `remark`, `received_date`) + lot/po indexes +
     set_updated_at trigger + 007-style RLS (admin-only delete). Records the final good qty per lot,
-    closing it. (Prompt 6 called it "008", but 008 was taken — this is 009.) **Pending — user runs it.**
+    closing it. (Prompt 6 called it "008", but 008 was taken — this is 009.) **Applied.**
     ⚠️ 002 section 0 drops `final_receipts cascade` and never recreates it → if 002 is ever re-run after
     009, re-apply 009. Reload the schema cache after.
   - `010` = **`dyeing_followups`** table (id, `followup_id` "DF-{ts}", `lot_no`, `po_unique_id`,
     `dying_house_name` [the "dying" spelling], `remaining_meters`, `next_followup_date`, `remark`) +
-    lot/po indexes + trigger + 007-style RLS. Log of follow-ups for lots at the dyeing house; overdue
-    (`next_followup_date <= today`) flagged client-side. **Applied 2026-06-11.**
+    lot/po indexes + trigger + 007-style RLS. **Applied 2026-06-11.** ⚠️ Originally built as a *chase
+    log*; 022 revealed it is really the **Stage-6 reissue-dispatch record** — see 022/025.
   - `011` = **`fabric_receipts`** table (id, `receipt_id` "FAB-{ts}{i}{rand}" per-row, `lot_no`,
     `po_unique_id`, `design_no`, `programmed_meters` [snapshot], `received_meters`, `received_date`,
     `remark`) + lot/po indexes + trigger + 007-style RLS. One row per design received back; one submit
     inserts many rows. **Applied 2026-06-11.** (010 + 011 are new names — 002 section 0 doesn't drop them.)
+  - `012` = **master-list management**: `active boolean not null default true` on `vendors`/
+    `dyeing_houses`/`qualities`, plus a **new `processes` master** (there wasn't one), same shape + RLS
+    as the others (authenticated read, admin write). Backs Settings → Master Lists (add/edit/deactivate;
+    admin-gated delete). Inactive entries drop out of the form dropdowns but keep existing rows valid.
+  - `013` = `warehouse_log.color text` (NULLABLE). Dyed goods derive colour from
+    `program_card_designs.color`, but **finished goods** (direct purchase / imported) have no program —
+    they are received straight into stock via the PO "Receive into stock" action, and this lets that
+    receipt carry a per-line colour instead of showing "—".
+  - `014` = `program_cards.color text` (NULLABLE) — the card's top-level **base shade** (e.g. Royal
+    Blue), matching the old paper form. (`delivery_days`, `color_cutting_attached`,
+    `total_color_cutting` already existed from 002.)
+  - `015` = `purchase_orders.checks_method` ('cad' | 'handloom') + `weaving_design` — the **Checks**
+    source's R&D route. The route's reference lives in the existing `cad_ref` / `handloom_ref` (007).
+    Both NULLABLE, form-enforced.
+  - `016` = **reversible, super-admin-only ARCHIVE** of a PO and its whole graph. An `archived boolean
+    not null default false` on every screen-listed table (purchase_orders, shipments, program_cards,
+    qc_checklist, reissue_return, warehouse_log, final_receipts, dyeing_followups, fabric_receipts),
+    **hidden at the RLS layer** — archived rows simply stop being returned by every existing query, so
+    **no app code had to change**. One atomic super-admin-gated function flips the flag across the PO
+    graph (matched by `po_unique_id` / `lot_no`); a restore flips it back. `program_card_designs` and
+    `po_color_variants` need no flag (hiding the parent hides them). Service-role / SECURITY DEFINER
+    paths bypass the hide so a super admin can still see and restore.
+  - `017` = `sample_approvals` (pre-PO sampling). **Superseded — do not build on it.**
+  - `018` = **drops `sample_approvals`** (OPTIONAL, destructive). The Sampling & Approval module was
+    removed from the app (commit `f7f0dbb`); **the workflow starts at PO generation**. The app works
+    whether or not 018 has been run. `purchase_orders.sampling_status`/`cad_ref`/`handloom_ref` are
+    deliberately LEFT in place — harmless PO metadata that several screens still select.
+    **Do NOT rebuild a sampling stage.**
+  - `019` = `purchase_orders.dying_house_name` — a PO is "a quantity of metres at a rate, from ONE
+    vendor, for ONE dyeing house", so the house is captured at the PO, not a stage later on the program
+    card. Same "dying" spelling as `program_cards.dying_house_name` on purpose (UI label stays "Dyeing
+    house"). NULLABLE: finished-goods POs never reach a dyeing house and keep it NULL; form-required on
+    the dyeing sources only.
+  - `020` = **`grey_instalments`** (Stage 2). Grey arrives in **instalments**, and one instalment can
+    split into **several lots** — previously an instalment and a lot were the same `shipments` row, so a
+    3-lot delivery couldn't be recorded as one event. New table: `instalment_id` "GRI-{ts}",
+    `po_unique_id`, `received_date`, `sent_quantity`, `remaining_qty`, `next_followup_date`, `remark`;
+    `shipments` gains `grey_instalment` (nullable FK). **`shipments` is still one row per LOT** — nothing
+    downstream sees instalments, so the dyeing queue / program cards / QC / warehouse are untouched.
+    ⚠️ `remaining_qty` is a **SNAPSHOT** of what was outstanding immediately BEFORE the entry — written
+    once, **never recomputed on read**.
+  - `021` = dyeing follow-up fields on `fabric_receipts` (Stage 3): `color`, `next_followup_date`, and
+    `remaining_qty` (again a **write-once SNAPSHOT** of the lot's outstanding metres before the entry).
+    Dyed fabric comes back **piecemeal**, so each received line carries the follow-up state, not just a
+    quantity. All NULLABLE.
+  - `022` = `dyeing_followups.sent_qty` — **Stage 6's defining column**. 010 shipped the stage minus the
+    dispatched quantity, which made it read like a chase log; it is a **dispatch record** for metres sent
+    back out. That is also why it carries **its own** `dying_house_name`: a reissue often goes to a
+    *different* house than the PO named. NULLABLE (pre-022 rows have nothing safe to backfill —
+    `remaining_meters` is the outstanding balance, not the dispatched qty).
+  - `023` = **incremental QC** (see the QC section below). New `qc_checklist` columns
+    `actual_design_no`/`actual_color`/`actual_qty`/`remark`; `overall_status` vocabulary migrated
+    Passed→`OKAY & WAITING FOR REMAINING QTY`, Failed→`RETURN & REISSUE` (CHECK re-added); `(lot_no,
+    overall_status)` index; and a **replaced `submit_qc_inspection` RPC** that writes **one row per
+    disposition** (up to two per design) so the status-filtered sums are well-defined.
+  - `024` = **warehouse status vocabulary** (Stage 5): `warehouse_log.remark`, and `status` migrated
+    from the meaningless free-text default `'Stored'` to `Waiting For More Qty` | `Final Qty Received`.
+    ⚠️ Both are **LOT-level STATE, not a per-row snapshot** — every warehouse row for a lot carries the
+    same one and they flip together, so the RPC **re-stamps the whole lot**, not just the rows it just
+    inserted (a row written three weeks ago must stop saying "waiting" when today's inspection closes
+    the lot). Contrast the `remaining_qty` snapshots in 020/021, which are never recomputed.
+  - `025` = **the reissue-cycle discriminator** (Stages 6–9). Stages 7/8/9 are *field-identical* to
+    3/4/5 — receive, inspect, store, run again for the rejected metres — so they **share the same
+    tables** with a `cycle text` column (`'original'` | `'reissue'`), **never duplicated tables**. Added
+    to `fabric_receipts`, `qc_checklist`, `warehouse_log`, `reissue_return` (default `'original'`) and
+    `dyeing_followups` (default **`'reissue'`** — that table *is* Stage 6).
+    ⚠️ **`cycle` is a PARALLEL DIMENSION, not a phase.** Both tracks run at once on the same lot (in
+    production a lot's whole reissue cycle finished in ten minutes while the original lot still had
+    750 m awaiting QC a month later). **Every lot-level rollup — `remainingForQC`, received-to-date,
+    warehouse status — must be keyed on `(lot, cycle)`.** Keyed on lot alone it mixes the two tracks and
+    closes lots early. Stage 8 can itself return `RETURN & REISSUE`, so the loop can repeat; the
+    discriminator records *which track* a row belongs to, not how many times round.
+  - `026` = **`shipments.delivery_mode`** (`'warehouse'` | `'direct_to_dyer'`, NOT NULL DEFAULT
+    `'warehouse'`) — how the grey physically reached the dyeing house. **Path A**: the vendor delivers
+    to our dock; rolls + the physical program card are dispatched onward together. **Path B**: the
+    vendor drop-ships the raw rolls **straight to the dyeing house**, so the receipt is logged
+    *virtually* off their invoice and only the card is couriered (the dyer matches it to the rolls by
+    the vendor design number). It lives on the **lot**, not `grey_instalments`, because every
+    downstream screen reads lots and never sees instalments (020); one instalment ships one way, so
+    the app stamps all its lots alike. The default is a correct backfill, not a placeholder — every
+    pre-026 lot did arrive at our dock.
 - **Roles:** `super_admin` > `admin` > `operator`. Only a super admin can change roles or
   deactivate users (Settings → Team Management → `/api/team/[id]`); super admin rows are
   immutable from the app. `is_admin()` includes super admins. Deactivated users are bounced
   by `(app)/layout.tsx` → `/api/auth/deactivated` (signs out, login shows a notice).
 - **RLS:** authenticated read/insert/update; **admin-only delete**. Profiles: operators read
   only their own row; admins+ read all (the Team list relies on this).
-- **Business IDs** are app-generated text: `UID-${Date.now()}` (PO `unique_id`),
-  `SHID-${Date.now()}` (shipment), `PG-{n}` (program — sequential max+1, retried on a unique
-  collision), `QC-{ts}{i}{rand}` (qc `check_id`), `STORE-{ts}{i}{rand}` (warehouse `store_id`),
-  `RE-{ts}{i}{rand}` (reissue `reissue_id`). The QC/STORE/RE ids carry a **per-row suffix** because
-  one QC submit inserts many rows into those `UNIQUE` columns. Lots are born on the **shipment**
-  (`lot_no` is set there, not on the PO).
+- **Business IDs** are app-generated text: `UID-{ts}` (PO `unique_id`), `GRI-{ts}` (grey instalment),
+  `SHID-{ts}` / `SHID-{ts}{i}{rand}` (shipment = **lot**), `PG-{n}` (program — sequential max+1,
+  retried on a unique collision), `DF-{ts}` (dyeing dispatch), `FAB-{ts}{i}{rand}` (fabric receipt),
+  `QC-{ts}{i}{rand}` (qc `check_id`), `STORE-{ts}{i}{rand}` (warehouse `store_id`),
+  `RE-{ts}{i}{rand}` (reissue `reissue_id`), `FR-{ts}` (final receipt). The multi-row ids carry a
+  **per-row suffix** because one submit inserts many rows into those `UNIQUE` columns. Lots are born
+  on the **shipment** (`lot_no` is set there, not on the PO) and are **typed by the operator**
+  (e.g. "Lot 24"), never generated.
+- **Snapshot vs. state — get this right.** `grey_instalments.remaining_qty` and
+  `fabric_receipts.remaining_qty` are **write-once snapshots** of what was outstanding immediately
+  *before* that entry: never recompute them on read. `warehouse_log.status` is the opposite — **lot-level
+  state** that the QC RPC re-stamps across the whole lot every time.
+- **Rollups are per `(lot, cycle)`** — see migration 025. A rollup keyed on `lot_no` alone silently
+  mixes the original and reissue tracks and closes lots early.
 - **`purchase_orders.amount` is a generated column** (quantity × rate) — never write it;
   omit it from insert/update payloads and display it rounded via `lib/format.ts`.
 - **Watch column spellings** (intentional, matched to the real schema): `dying_house_name`
@@ -231,7 +319,7 @@ again**: no gradients, no background textures, no themed metaphors. Implemented 
 - **Every color is a semantic CSS variable** — never hardcode hex/rgb in components. Light
   (default) + dark ship via the top-bar toggle, persisted and applied before paint.
 
-## Current state (2026-06)
+## Current state (2026-07-28)
 
 **Live (server fetch + TanStack Query):**
 - **Dashboard** (`/`) — **live command center** (`src/lib/dashboard.ts` `deriveDashboard` = pure
@@ -246,71 +334,165 @@ again**: no gradients, no background textures, no themed metaphors. Implemented 
   pending; overdue-first, one-click jump). **Live activity** (newest across shipments/programs/qc/
   warehouse by `created_at`; genuinely-new rows slide in via a seen-ids ref). `today` = UTC
   `toISOString().slice(0,10)` (hydration-safe, matches the dyeing screen). Added `--accent-bg` token.
-- **Purchase Orders** (`/purchase-orders`) — **smart adaptive form** driven by a sourcing-path
-  pill row (grey/client_fabric/checks_weaves/direct_purchase/imported): shared core + a path-
-  specific panel (sample-approval toggle → `sampling_status`; checks adds cad/handloom refs;
+- **Purchase Orders** (`/purchase-orders`) — **smart adaptive form** driven by a **two-level**
+  source picker matching the "Diff PO to generate" chart: **4 sources** (Order PO / Checks /
+  Direct purchase / China imported), and **Order PO** then asks for its branch — Grey fabric or
+  Client fabric finishing (required once Order PO is picked). ⚠️ **Client fabric is a branch of
+  Order PO, not a 5th source** — never render the paths as flat peers. The DB column
+  `sourcing_path` still stores the *branch* level (the same 5 values) so grey vs. client-fabric
+  stays distinguishable downstream; `SOURCE_OF_PATH`/`sourceOf()` in `lib/po-meta.ts` map a
+  stored path back up to its source and `sourcingLabel()` renders "Order PO · Grey fabric".
+  Then: shared core + a path-specific panel (sample-approval toggle → `sampling_status`; checks adds cad/handloom refs;
   direct→`direct_subtype`; imported badge), an Internal Quality Name datalist (required), and a
   **colour breakdown** editor (auto A/B/C, live "X of Y m allocated") saved to `po_color_variants`
   via the service-role variants route. Table adds Quality Name + Sourcing + a colour-count chip;
   **optimistic create/edit**; track modal shows metadata + variants + received-vs-ordered;
   admin-only delete with full-fidelity Undo (variants snapshot + replay).
-- **Grey House Follow Up** (`/grey-receipts`) — sent vs. pending per PO; manage-shipments
-  modal logs shipments (which create lots). Over-shipment is allowed but warns via toast.
-- **Dyeing Queue** (`/dyeing-queue`) — read-only; derives one lot-row per shipment, status
-  Pending/Created Program; hides lots already in `qc_checklist`.
-- **Program Cards** (`/program-cards`) — groups `program_cards` by Program ID + Lot No,
-  enriched with parent PO; row→detail popup lists the colour cuttings (`program_card_designs`,
-  with a per-colour **View cutting** link); **hides lots already in `qc_checklist`**. Smarter
-  New-Program form: lot picker → **pre-fills colour rows from the PO's `po_color_variants`**
-  (colour + metres, defaults Total meters to their sum), **per-colour cutting** upload with the
-  **white-swatch rule** (a colour named "White" needs no cutting; all others require one), a live
-  meterage indicator, auto `PG-{n}`, optimistic create. `design_no` = the auto A/B/C code (feeds
-  QC). **Needs migration 008** (`cutting_url`).
-- **QC Inspection** (`/qc-inspection`) — "Start QC" 3-step wizard (pick program + received qty
-  + tick designs → Pass/Fail → four checks, or failed-qty/reason/return-&-reissue). On submit,
-  **per selected design**: a `qc_checklist` row always, a `warehouse_log` row when
-  `passed_qty > 0`, a `reissue_return` row on Fail with `failed_qty > 0`. Prefers the atomic
-  RPC (migration 006), falls back to sequential inserts. Past-inspections table. Submitting
-  invalidates `["qc_lots"]`, so **the lot leaves the Dyeing Queue + Program Cards**.
+- **Grey House Follow Up** (`/grey-receipts`) — Stage 2. Sent vs. pending per PO, overdue-first
+  (planned grey arrival = `order_date + delivery_days`). The manage-shipments modal logs a **grey
+  instalment** (migration 020) and **splits it into one or more lots** on the spot — the operator
+  **types each `lot_no`** ("Lot 24") line-by-line; lots are born here. `remaining_qty` is snapshotted
+  at write time. Over-shipment is allowed (pending goes negative) but warns via toast.
+  **Finished-goods POs are excluded** from this screen (`isFinishedGoodsPo`) — they never see grey.
+  The receipt also records **which of the two logistical routes** it took (026, `lib/delivery-mode.ts`):
+  *To our warehouse* (Path A) or *Direct to dyeing house* (Path B — a **virtual receipt** off the
+  vendor's invoice; the fabric never touches our floor, but the lot is just as real and enters the
+  dyeing queue immediately). Drop-shipped lots carry a "Direct to dyer" pill on the lot list, the
+  dyeing queue, and the dispatch modal. The toggle **resets to warehouse** after each save — a sticky
+  drop-ship flag would silently mis-stamp the next ordinary receipt.
+- **Dyeing Queue** (`/dyeing-queue`) — one lot-row per shipment, status Pending / Created Program,
+  segmented filter. **Program creation lives here** (primary action "New program"), plus admin delete
+  and a PO-info popup. Hides a lot only once it is **fully closed** — `fetchClosedQcLotNos`, *not*
+  "has any QC row" (QC is incremental; see 023). Planned dyeing-return date counts **working days**
+  via `lib/working-days.ts` + the `holidays` master.
+- **Program Cards** (`/program-cards`) — ⚠️ **a route, not a nav item** — it was folded into the
+  Dyeing Queue (`nav.ts` has no entry for it; the Dyeing Queue blurb says "create & view program
+  cards here"). Groups `program_cards` by Program ID + Lot No, enriched with parent PO; row→detail
+  popup lists the colour cuttings (`program_card_designs`, per-colour **View cutting** link). The
+  New-Program form: lot picker → **pre-fills colour rows from the PO's `po_color_variants`** (colour +
+  metres, Total meters defaults to their sum), **per-colour cutting** upload with the **white-swatch
+  rule** (a colour named "White" needs no cutting; all others require one), a live meterage indicator,
+  auto `PG-{n}`, optimistic create. `design_no` = the auto A/B/C code (feeds QC).
+- **Dyeing House Follow Up (Sent)** (`/dyeing-follow-up`) — the **dispatch record**, not a chase log.
+  **Both legs live in this one table**, split by `cycle` (025), and the modal has a segmented switch:
+  - **"Send for dyeing"** (`cycle='original'`) — the **first** trip out, at **LOT grain**: one lot
+    travels with its one physical program card. Population = lots that have a program card with
+    metres still to send (`total_meters − Σ sent on this leg`). On a **drop-shipped** lot (026) the
+    modal says so: the rolls are already at the dyer, courier the card only.
+  - **"Send back reissue"** (`cycle='reissue'`) — QC-rejected metres going back, at **PO grain**:
+    one parcel bundles several rejected lots, so the row records **no `lot_no`**, and the house is
+    editable because a reissue often goes to a *different* house than the PO named.
+  ⚠️ **The grains differ on purpose — don't merge the two pickers.** An earlier revision had the
+  "lots with a program card" set feeding the *reissue* picker; that was wrong (such lots have nothing
+  to send *back*) and it was correctly removed. It is the right set for the first leg.
+  ⚠️ **Any sum over this table must filter by `cycle`.** `dispatchedByPo` counts reissue rows only —
+  without the filter a first-trip dispatch cancels QC-rejected metres and the PO silently vanishes
+  from the reissue picker. Legacy rows predate `cycle` and default to `'reissue'`; treat missing the
+  same way. `sent_qty` is what the return reconciles against; `remaining_meters` is the pre-entry
+  snapshot — a different number.
+- **QC Inspection** (`/qc-inspection`) — Stage 4, **incremental** (migration 023). 3-step wizard:
+  ① pick program + received qty + tick designs, recording the **actual design/colour/qty found**
+  (which may differ from the program card) → ② disposition → ③ the four checks, or
+  failed-qty/reason/return-&-reissue. The two statuses are verbatim business strings in
+  `lib/qc-status.ts`: **`OKAY & WAITING FOR REMAINING QTY`** and **`RETURN & REISSUE`** — never
+  Pass/Fail. On submit the RPC writes **one row per disposition** (up to two per design): good metres →
+  `qc_checklist` + `warehouse_log`; reissue metres → `qc_checklist` + `reissue_return`; then it
+  **re-stamps the whole lot's warehouse status** (024). A lot leaves the Dyeing Queue / Program Cards
+  only when **nothing remains for QC** — one lot routinely has several inspection rows over weeks.
 - **Reissue & Return** (`/reissue-return`) — every `reissue_return` row enriched with parent PO
   (via `original_po_unique_id`); row→detail popup with two sections (Original PO info; Failure &
   reissue details, Failed Qty = `reissue_qty`). Actions: Assign New Lot No (→ `Reissue Pending`)
   or Mark as Returned (→ `Returned`, clears `new_lot_no`); a Returned row is terminal in the UI.
-- **Warehouse** (`/warehouse`) — live **Ready-Goods ledger**: `warehouse_log` (written by QC on
-  pass) grouped one row per lot, joined to the parent PO for the **Quality Name** + rate and to
-  `program_cards` for Program ID + dyeing house (warehouse_log has no `program_uid`). 3 CountUp
-  metric cards (stored metres, stored-design count, reissue-pending). Clickable rows → detail
-  (general info + Stored-designs table with colour from `program_card_designs`, + Failed/reissued
-  table). Read-only. Realtime: `warehouse_log → ["warehouse_all"]` so QC passes appear live
-  (needs the table in the `supabase_realtime` publication).
-- **Dyeing Follow Up** (`/dyeing-follow-up`) — log of follow-ups for lots still at the dyeing house
-  (migration 010 `dyeing_followups`). "Log follow-up" modal (key `n`/palette): picks a lot (has a
-  program, not yet QC'd), pre-fills dyeing house + remaining metres, sets next date + remark. **Overdue**
-  (`next_followup_date <= today`) gets a danger pill, an overdue-count metric card, and **floats to the
-  top** (primary sort key, chosen column sorts within groups). Optimistic insert, realtime, search/sort.
-- **Fabric Receipts** (`/fabric-receipts`) — dyed fabric received back **per design** (migration 011
-  `fabric_receipts`). "Record fabric receipt" modal (key `n`/palette): picks a lot → loads its
-  `program_card_designs` (seeded once/program, default received = programmed metre) → enter received per
-  design with a live **received-vs-programmed** indicator (matched/short/over). One row per design (short
-  ones flagged), optimistic multi-row insert, realtime, search/sort.
+- **Warehouse** (`/warehouse`) — Stage 5, the live **Ready-Goods ledger**: `warehouse_log` (written by
+  QC on a good disposition) grouped one row per lot, joined to the parent PO for the **Quality Name** +
+  rate and to `program_cards` for Program ID + dyeing house (warehouse_log has no `program_uid`).
+  Status is **lot-level** — `Waiting For More Qty` → `Final Qty Received` (024, `lib/warehouse-status.ts`;
+  `lotStatus()` returns final only when *every* row says so). CountUp metric cards, clickable rows →
+  detail (general info + Stored-designs table with colour, + Failed/reissued table). Read-only.
+  Realtime: `warehouse_log → ["warehouse_all"]` (needs the table in the `supabase_realtime` publication).
+- **Fabric Receipts** (`/fabric-receipts`) — Stage 3 (and Stage 7 for the reissue leg, told apart by
+  `cycle`). Dyed fabric received back **per design** (migrations 011 + 021). Modal (key `n`/palette):
+  picks a lot → loads its `program_card_designs` (default received = programmed metre) → enter received
+  per design with a live **received-vs-programmed** indicator (matched/short/over), plus `color`, the
+  next follow-up date and the lot-level `remaining_qty` **snapshot**. Dyed fabric comes back
+  **piecemeal**, so a lot has many receipt rows over time. One row per design, optimistic multi-row
+  insert, realtime, search/sort.
 - **Final Receipts** (`/final-receipts`) — records the **final confirmed good qty per lot, closing it**
   (migration 009 `final_receipts`). "Record final receipt" modal (key `n`/palette): picks a QC-passed lot
   (in `warehouse_log`, minus already-closed lots), defaults Final metres to the lot's stored metres, +
   status (Closed/Partial/On Hold)/remark/date. Table (Lot, PO, Quality Name, Final metres, Date, status
   pill) with instant search/sort, **optimistic insert**, realtime (`final_receipts`), smart empty state.
-- **Settings** (`/settings`) — Team Management: members table (name/email/role/status/joined);
-  super admins change roles (operator↔admin) and deactivate/reactivate via `/api/team/[id]`.
-  Degrades gracefully until migration 003 is applied (no email/controls shown).
+- **Settings** (`/settings`) — **Team Management** (members table name/email/role/status/joined; super
+  admins change roles operator↔admin and deactivate/reactivate via `/api/team/[id]`) and **Master
+  Lists** (migration 012: Vendors / Quality Names / Dyeing Houses / Processes — add, edit, deactivate;
+  admin-gated delete via `/api/masters/[table]/[id]`; inactive entries drop out of form dropdowns).
 
-⚠️ **Reality check (2026-06-11):** these screens are coded correctly against the repo schema, but
-until 2026-06-11 the **live DB was a drifted draft** (see the 002 migration note), so none of them
-actually worked end-to-end against the real backend. After re-applying the authoritative 002 + 007,
-the DB finally matches the code — so treat "live" as "code-complete + schema now aligned," and
-re-verify each screen against real data as you touch it. Migrations **001–011 all applied** (incl. 006).
+### The 9-stage process model (`lib/sla.ts`)
 
-**Everything in the nav is now built — including the live Dashboard.** The remaining work is the
-pending tech debt below. **All 11 migrations + 006 are applied and Realtime replication is enabled
-(2026-06-12)** — the app is feature-complete and fully wired to the live backend.
+The pipeline is numbered, and **Stages 7/8/9 are field-identical to 3/4/5** — the same receive →
+inspect → store, run again for the rejected metres. They share tables, discriminated by `cycle`:
+
+| Stage | What | Where | SLA (working days) |
+| --- | --- | --- | --- |
+| 1 | PO generation | `purchase_orders` (+ `po_color_variants`) | — |
+| 2 | Grey sent / lot birth | `grey_instalments` → `shipments` | 1, from PO order date |
+| — | Program card | `program_cards` + `program_card_designs` | — |
+| 3 | Dyeing receipt | `fabric_receipts` (`cycle='original'`) | 4, from program-card date |
+| 4 | QC | `qc_checklist` (`cycle='original'`) | 5, from actual-received date |
+| 5 | Warehouse | `warehouse_log` (`cycle='original'`) | 1, from QC actual date |
+| 6 | Reissue sent (dispatch) | `dyeing_followups` (`cycle='reissue'`) | 7, from QC reissue date |
+| 7 | Reissue receipt | `fabric_receipts` (`cycle='reissue'`) | 7, from dispatch date |
+| 8 | Reissue QC | `qc_checklist` (`cycle='reissue'`) | 5, from actual-received date |
+| 9 | Reissue warehouse | `warehouse_log` (`cycle='reissue'`) | 1, from reissue QC date |
+
+⚠️ **SLA clocks run in WORKING days** — `lib/working-days.ts`. **The mill works six days: Sunday is
+the only weekly non-working day, Saturday counts.** Treating Saturday as a weekend shortens every
+planned date by ~a day a week and marks work overdue before it is. The `holidays` master (001) is
+also skipped. All arithmetic is UTC `YYYY-MM-DD` so it stays hydration-stable.
+
+**`lib/sla.ts` is wired in as an OVERLAY, on the Dashboard's "SLA standing" panel** — per stage:
+how many units are open past target, the worst delay, and how many finished late.
+⚠️ **It does not drive any planned date or overdue flag.** Those still come from each record's own
+`delivery_days` (what was negotiated for *that* order); the SLA target is the internal standard for
+the stage. **Two independent yardsticks — do not merge them.** The derivation is
+`deriveDashboard` → `stageStanding()`, keyed per `(lot, cycle)` for stages 3/4/5 vs 7/8/9 so a lot's
+reissue track can't make its original track look on time.
+
+ℹ️ Calendar vs working days is **deliberately mixed** and was reviewed 2026-07-28: the **grey**
+planned date (`order_date + delivery_days`) stays in **calendar** days because a vendor lead time
+("45 days delivery") is quoted that way; the **dyeing return** and **all SLA clocks** run in
+**working** days. Don't "fix" the grey path to working days — it moves every planned date later and
+silently un-flags overdue rows.
+
+### Shared lib modules worth knowing before you write anything
+
+- `columns.ts` — **single source of truth for the PostgREST column lists.** These strings used to be
+  copy-pasted into every Server Component, so a column-adding migration silently missed most of them
+  (015's `checks_method`/`weaving_design` never reached first render). **Add new columns here, once.**
+  ⚠️ The Dashboard page kept its own private copies until 2026-07-28 and they had gone stale — no
+  `cycle`, no QC `actual_*`, no 024 remarks — so every cycle-aware derivation there silently read
+  `undefined`. It now imports from here. **Never reintroduce a local column list.**
+- `use-grid-nav.ts` — spreadsheet keyboard nav for the repeating data grids (PO colours, program
+  designs, fabric-receipt lines): **Enter moves down the column, Shift+Enter up, Tab across**
+  (native), and Enter on the last row appends one where the grid grows. ⚠️ Intercepting Enter is
+  **required**, not a nicety: these grids sit inside a `<form>`, so without it Enter submits the form
+  from a half-filled row.
+- `qc-status.ts` / `warehouse-status.ts` / `cycle.ts` — the verbatim business status strings and the
+  cycle discriminator. Import the constants; never re-type the literals.
+- `working-days.ts` (six-day week) and `sla.ts` (stage targets).
+- `optimistic.ts` — the standard optimistic-list helpers (`optimisticPatch`/`optimisticRemove` +
+  rollback) used by every mutation.
+- `format.ts` (en-IN numbers, `addCalendarDays`), `fuzzy.ts` (command-palette scoring),
+  `use-esc-close.ts`, `use-debounced-value.ts`.
+
+✅ **Migration status: 001–026 are ALL applied** (verified against the live DB 2026-07-28 — all 11
+expected columns from 019–026 present, `grey_instalments` exists, and `submit_qc_inspection` is the
+**025** cycle-aware version). Continue the sequence from **027**. Note when re-verifying: 023, 024 and
+025 each `create or replace` that RPC, so probing its body for `'Waiting For More Qty'` does **not**
+distinguish 024 from 025 — key off `v_cycle`, which only 025 declares. And remember every
+column-adding migration needs
+`NOTIFY pgrst, 'reload schema';` afterwards. If a screen errors on a column a migration file defines,
+dump `information_schema.columns` and check the live DB before blaming the cache.
 
 **Pending tech debt:** the Tailwind migration (above); and the README is stale (it claims the backend
 isn't connected — it is).
