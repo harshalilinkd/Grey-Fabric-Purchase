@@ -193,7 +193,20 @@ export function ManageShipmentsModal({
         legacy.push(s);
       }
     }
-    const blocks = instalments.map((inst) => ({ inst, lots: byInst.get(inst.id) ?? [] }));
+    /* An instalment is only as real as the lots it produced. Deleting a lot removes the
+       shipment row but never its parent instalment (that delete is admin-only and the route
+       doesn't cascade), so an instalment whose lots have all gone would otherwise keep
+       reporting metres that no longer exist — the history said "7,000 m received" while
+       Sent-to-date said 0 m. Drop the emptied ones, and take each surviving instalment's
+       figure from its LIVE lots so removing one lot of three updates the total instead of
+       lying. `remaining_qty` stays the stored snapshot — it is a write-once record of what
+       was outstanding at the time, and must never be recomputed. */
+    const blocks = instalments
+      .map((inst) => {
+        const lots = byInst.get(inst.id) ?? [];
+        return { inst, lots, received: round2(lots.reduce((sum, l) => sum + (l.sent_quantity ?? 0), 0)) };
+      })
+      .filter((b) => b.lots.length > 0);
     return { blocks, legacy };
   }, [history, instalments]);
 
@@ -261,11 +274,11 @@ export function ManageShipmentsModal({
               <p className="muted-note">No grey received yet.</p>
             ) : (
               <>
-                {grouped.blocks.map(({ inst, lots: instLots }) => (
+                {grouped.blocks.map(({ inst, lots: instLots, received }) => (
                   <div className="inst-block" key={inst.id}>
                     <div className="inst-head">
                       <span className="strong">{fmtDate(inst.received_date)}</span>
-                      <span><span className="mono">{fmtNum(inst.sent_quantity)}</span> m received</span>
+                      <span><span className="mono">{fmtNum(received)}</span> m received</span>
                       <span>
                         Remaining before: <span className="mono">{fmtNum(inst.remaining_qty)}</span> m
                       </span>
